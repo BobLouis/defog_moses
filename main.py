@@ -7,8 +7,8 @@ from glob import glob
 
 # 根據不同的版本、跑不同的dataset 調整!!!
 from defog_proposed import defog_img
-defog_version = "test"
-dataset = "kaggle_SOTS_indoor"
+defog_version = "proposed_psi=1.5"
+dataset = "SOTS_in"
 
 def main():
     hazy_dir = f"./dataset/{dataset}/hazy"
