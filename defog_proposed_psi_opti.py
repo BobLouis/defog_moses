@@ -4,8 +4,8 @@ from PIL import Image
 from scipy.ndimage import minimum_filter
 
 # ======= 你離線擬合出的線性係數（可改） =======
-PSI_A = 2.062712
-PSI_B = -0.517968
+PSI_A = 1.315537
+PSI_B = 0.016293
 PSI_STEP = 0.02  # 量化格距（硬體友善）
 
 # ======= 一次掃圖的 haze 指標與 ψ 預測 =======

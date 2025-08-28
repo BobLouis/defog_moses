@@ -23,7 +23,7 @@ S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
 	=> t(x) = 1 - w * (K_H(x) / A) * (1 - 1/(2 - S_H(x)) )
 """
 
-def defog_img(hazy_image, psi=1.5, t0=0.2, window_size=8, epsilon=1e-6):
+def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	"""
 	基於論文方法對輸入的 hazy 圖像進行去霧處理，返回無霧圖像、暗通道圖像、大氣光和傳輸圖。
 	參數:

@@ -18,7 +18,7 @@ from skimage.metrics import structural_similarity as sk_ssim
 from skimage.color import rgb2lab, deltaE_ciede2000
 
 # -------- 基本設定（依需求修改） --------
-dataset = "SOTS_out"
+dataset = "SOTS_inout"
 defog_version = "optimize_psi"  # 依你的輸出資料夾命名慣例
 psi_start = 0.5
 psi_end = 2.00

@@ -11,7 +11,7 @@ from glob import glob
 import pandas as pd
 from tqdm import tqdm
 
-defog_version = "proposed_psi_opti" 
+defog_version = "proposed_psi_opti_new" 
 dataset = "SOTS_out"  # 可根據需要修改
 
 def compute_psnr(defogged_image, clear_image_path, Xsize, Ysize):
