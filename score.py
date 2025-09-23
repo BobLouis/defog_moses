@@ -11,8 +11,8 @@ from glob import glob
 import pandas as pd
 from tqdm import tqdm
 
-defog_version = "proposed_psi_opti_new" 
-dataset = "SOTS_out"  # 可根據需要修改
+defog_version = "test917" 
+dataset = "SOTS_in"  # 可根據需要修改
 
 def compute_psnr(defogged_image, clear_image_path, Xsize, Ysize):
     """計算無霧圖像與清晰參考圖像之間的 PSNR 值"""

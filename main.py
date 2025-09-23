@@ -6,9 +6,9 @@ from PIL import Image
 from glob import glob
 
 # 根據不同的版本、跑不同的dataset 調整!!!
-from defog_fire import defog_img
-defog_version = "test"
-dataset = "fire"
+from defog_proposed import defog_img
+defog_version = "test917"
+dataset = "SOTS_out"
 
 def main():
     hazy_dir = f"./dataset/{dataset}/hazy"
@@ -18,12 +18,12 @@ def main():
     os.makedirs(output_defog_dir, exist_ok=True)
     # os.makedirs(output_dark_dir, exist_ok=True)
 
-    hazy_files = sorted(glob(os.path.join(hazy_dir, "*.jpg")))
+    hazy_files = sorted(glob(os.path.join(hazy_dir, "*.png")))
 
     for hazy_path in hazy_files:
         full_name = os.path.splitext(os.path.basename(hazy_path))[0]
         base_name = full_name.split('_')[0]
-        output_defog_path = os.path.join(output_defog_dir, f"{base_name}_{defog_version}.jpg")
+        output_defog_path = os.path.join(output_defog_dir, f"{base_name}_{defog_version}.png")
 
         print(f"\n處理中: {hazy_path}")
         print(f"輸出結果: {output_defog_path}")
