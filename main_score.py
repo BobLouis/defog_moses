@@ -1,18 +1,56 @@
-import cv2
+# main.py
 import numpy as np
+import os
+import time
 from PIL import Image
+from glob import glob
 from skimage.metrics import peak_signal_noise_ratio as calculate_psnr
 from skimage.metrics import structural_similarity as calculate_ssim
 from skimage.color import rgb2lab, deltaE_ciede2000
-import numpy as np
-import os
-from PIL import Image
 from glob import glob
 import pandas as pd
 from tqdm import tqdm
 
-defog_version = "correlation_psi" 
-dataset = "SOTS_inout"  # 可根據需要修改
+# 根據不同的版本、跑不同的dataset 調整!!!
+from defog_proposed_psi_correlation import defog_img
+defog_version = "correlation_psi"
+dataset = "SOTS_inout"
+
+def main():
+    hazy_dir = f"./dataset/{dataset}/hazy"
+    output_defog_dir = f"./dataset/{dataset}/result_{defog_version}"
+    # output_dark_dir = f"./dataset/{dataset}/dark{defog_version}"
+
+    os.makedirs(output_defog_dir, exist_ok=True)
+    # os.makedirs(output_dark_dir, exist_ok=True)
+
+    hazy_files = sorted(glob(os.path.join(hazy_dir, "*.png")))
+
+    for hazy_path in hazy_files:
+        full_name = os.path.splitext(os.path.basename(hazy_path))[0]
+        base_name = full_name.split('_')[0]
+        output_defog_path = os.path.join(output_defog_dir, f"{base_name}_{defog_version}.png")
+
+        print(f"\n處理中: {hazy_path}")
+        print(f"輸出結果: {output_defog_path}")
+
+        try:
+            img = Image.open(hazy_path).convert('RGB')
+            H = np.array(img)
+
+            start_time = time.time()
+            defog_output, A = defog_img(H)
+            end_time = time.time()
+            diff_time = end_time - start_time
+
+            Image.fromarray(defog_output).save(output_defog_path)
+
+            print(f"大氣光 A: {A}")
+            print(f"執行時間 = {diff_time:.3f} 秒 \t {int(diff_time*1000)} 毫秒")
+
+        except Exception as e:
+            print(f"處理 {hazy_path} 時發生錯誤: {e}")
+
 
 def compute_psnr(defogged_image, clear_image_path, Xsize, Ysize):
     """計算無霧圖像與清晰參考圖像之間的 PSNR 值"""
@@ -80,7 +118,7 @@ def compute_ciede2000(defogged_image, clear_image_path, Xsize, Ysize, sample_ste
         print(f"Error calculating CIEDE 2000: {e}")
         return 0
 
-def main():
+def score():
     clear_dir = f"./dataset/{dataset}/clear"
     defog_dir = f"./dataset/{dataset}/result_{defog_version}"
 
@@ -136,3 +174,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    score()
