@@ -241,3 +241,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+# === FORMULA VALIDATION ===
+# Mean Squared Error: 0.0725
+# R² Score: 0.1046
+# Mean Absolute Error: 0.2223
+# Error statistics:
+#   Mean error: -0.0000
+#   Std error: 0.2692
+#   Max error: 0.7747

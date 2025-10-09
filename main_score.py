@@ -12,9 +12,10 @@ import pandas as pd
 from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
-from defog_proposed_psi_correlation import defog_img
-defog_version = "correlation_psi"
-dataset = "SOTS_inout"
+from defog_2025 import defog_img
+defog_version = "defog_2025"
+# dataset = "SOTS_inout"
+dataset = "OHaze"
 
 def main():
     hazy_dir = f"./dataset/{dataset}/hazy"
