@@ -3,7 +3,8 @@
 import numpy as np
 from scipy.ndimage import minimum_filter
 from fog_predict.fog_estimation_light import estimate_fog_simple
-
+from fog_predict.dc_edge import estimate_fog_dc_edge
+from fog_predict.gr import estimate_fog_gr_nb
 """ 公式整理
 H(x) = D(x)*t(x) + A*(1-t(x))
 D(x) = ((H(x) - A) / t(x)) + A
@@ -24,7 +25,52 @@ S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
 	=> t(x) = 1 - w * (K_H(x) / A) * (1 - 1/(2 - S_H(x)) )
 """
 
-def predict_psi(image):
+# def predict_psi(image):
+# 	"""
+# 	Calculate best PSI value based on fog score estimation.
+# 	Parameters:
+# 	image: Input image (RGB, np.uint8 or np.float32)
+# 	Returns:
+# 	BestPsi: Optimal PSI value calculated as 0.011099 × FogScore + 0.746386
+# 	"""
+# 	# Ensure image is in uint8 format for fog estimation
+# 	if image.dtype == np.float32:
+# 		img_uint8 = np.clip(image, 0, 255).astype(np.uint8)
+# 	else:
+# 		img_uint8 = image
+
+# 	# Calculate fog score using the estimation function
+# 	metrics = estimate_fog_simple(img_uint8)
+# 	fog_score = metrics['fog_score']
+
+# 	# Calculate best PSI based on fog score correlation
+# 	BestPsi = 0.011099 * fog_score + 0.746386
+
+# 	return BestPsi
+
+# def predict_psi(image): ## DC
+# 	"""
+# 	Calculate best PSI value based on fog score estimation.
+# 	Parameters:
+# 	image: Input image (RGB, np.uint8 or np.float32)
+# 	Returns:
+# 	BestPsi: Optimal PSI value calculated as 0.011099 × FogScore + 0.746386
+# 	"""
+# 	# Ensure image is in uint8 format for fog estimation
+# 	if image.dtype == np.float32:
+# 		img_uint8 = np.clip(image, 0, 255).astype(np.uint8)
+# 	else:
+# 		img_uint8 = image
+
+# 	# Calculate fog score using the estimation function
+# 	metrics = estimate_fog_dc_edge(img_uint8)
+# 	fog_score = metrics['fog_score']
+
+# 	# Calculate best PSI based on fog score correlation
+# 	BestPsi = 0.007503 * fog_score + 0.763537
+
+# 	return BestPsi
+def predict_psi(image): ## GR
 	"""
 	Calculate best PSI value based on fog score estimation.
 	Parameters:
@@ -39,14 +85,13 @@ def predict_psi(image):
 		img_uint8 = image
 
 	# Calculate fog score using the estimation function
-	metrics = estimate_fog_simple(img_uint8)
+	metrics = estimate_fog_gr_nb(img_uint8)
 	fog_score = metrics['fog_score']
 
 	# Calculate best PSI based on fog score correlation
-	BestPsi = 0.011099 * fog_score + 0.746386
+	BestPsi = -0.004616 * fog_score + 1.342784
 
 	return BestPsi
-
 def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	"""
 	基於論文方法對輸入的 hazy 圖像進行去霧處理，返回無霧圖像、暗通道圖像、大氣光和傳輸圖。

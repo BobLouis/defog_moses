@@ -12,11 +12,12 @@ base_dir = f"./dataset/{dataset}"
 report_dir = os.path.join(base_dir, "report")
 
 # 輸入檔案
-fog_csv = os.path.join(report_dir, "fog_estimation_simple.csv")
+# fog_csv = os.path.join(report_dir, "fog_estimation_simple.csv")
+fog_csv = os.path.join(report_dir, "fog_estimation_gr_nb.csv")
 psi_csv = os.path.join(report_dir, "score_optimize_psi_grid.csv")
 
 # 輸出檔案
-output_csv = os.path.join(report_dir, "fog_psi_comparison.csv")
+output_csv = os.path.join(report_dir, "fog_psi_comparison_gr_nb.csv")
 output_plot = os.path.join(report_dir, "fog_psi_scatter.png")
 
 
@@ -35,7 +36,8 @@ def load_and_merge_data():
     
     # 合併資料（根據 Image）
     df_merged = pd.merge(
-        df_fog[['Image', 'FogScore', 'DynamicRange', 'AvgLocalDiff', 'AvgDeviation']],
+        # df_fog[['Image', 'FogScore', 'DynamicRange', 'AvgLocalDiff', 'AvgDeviation']],
+        df_fog[['Image', 'FogScore']],
         df_psi[['Image', 'BestPsi', 'PSNR']],
         on='Image',
         how='inner'

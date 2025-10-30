@@ -13,7 +13,8 @@ from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
 from defog_proposed_psi_fog_esti_corr import defog_img
-defog_version = "defog_proposed_psi_fog_esti_corr"
+defog_version = "defog_proposed_psi_fog_esti_corr_gr"
+# dataset = "OHaze"
 dataset = "SOTS_inout"
 
 def main():
