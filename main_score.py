@@ -12,8 +12,8 @@ import pandas as pd
 from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
-from defog_proposed_psi_fog_esti_corr import defog_img
-defog_version = "defog_proposed_psi_fog_esti_corr_gr"
+from defog_proposed_psi_fog_esti_corr_clean import defog_img
+defog_version = "defog_proposed_psi_fog_esti_corr_clean"
 # dataset = "OHaze"
 dataset = "SOTS_inout"
 
