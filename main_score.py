@@ -14,8 +14,8 @@ from tqdm import tqdm
 # 根據不同的版本、跑不同的dataset 調整!!!
 from defog_proposed_psi_fog_esti_corr_clean import defog_img
 defog_version = "defog_proposed_psi_fog_esti_corr_clean"
-# dataset = "OHaze"
-dataset = "SOTS_inout"
+dataset = "OHaze"
+# dataset = "SOTS_out"
 
 def main():
     hazy_dir = f"./dataset/{dataset}/hazy"
