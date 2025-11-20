@@ -5,15 +5,15 @@ from scipy import stats
 import matplotlib.pyplot as plt
 
 # -------- 設定 --------
-dataset = "SOTS_inout"
-# dataset = "OHaze"
+# dataset = "SOTS_inout"
+dataset = "OHaze"
 
 base_dir = f"./dataset/{dataset}"
 report_dir = os.path.join(base_dir, "report")
 
 # 輸入檔案
-# fog_csv = os.path.join(report_dir, "fog_estimation_simple.csv")
-fog_csv = os.path.join(report_dir, "fog_estimation_gr_nb.csv")
+fog_csv = os.path.join(report_dir, "fog_estimation_simple.csv")
+# fog_csv = os.path.join(report_dir, "fog_estimation_tile.csv")
 psi_csv = os.path.join(report_dir, "score_optimize_psi_grid.csv")
 
 # 輸出檔案

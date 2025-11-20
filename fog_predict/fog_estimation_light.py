@@ -5,8 +5,8 @@ import numpy as np
 from PIL import Image
 
 # -------- 基本設定 --------
-dataset = "SOTS_inout"
-# dataset = "OHaze"
+# dataset = "SOTS_inout"
+dataset = "OHaze"
 
 # -------- 路徑 --------
 base_dir = f"./dataset/{dataset}"

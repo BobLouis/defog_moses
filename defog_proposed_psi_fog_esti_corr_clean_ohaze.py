@@ -23,74 +23,59 @@ S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
 	=> t(x) = 1 - w * (K_H(x) / A) * (1 - 1/(2 - S_H(x)) )
 """
 
-def predict_psi(image):
-	"""
-	Calculate best PSI value based on fog score estimation.
-	Parameters:
-	image: Input image (RGB, np.uint8 or np.float32)
-	Returns:
-	BestPsi: Optimal PSI value calculated as 0.011099 × FogScore + 0.746386
-	"""
-	# Ensure image is in uint8 format
-	if image.dtype == np.float32:
-		img = np.clip(image, 0, 255).astype(np.uint8)
-	else:
-		img = image
+def predict_psi(image, tile=8, use_y=True, percentile=80):
+    # 1) 轉灰階（改用 Y），或維持你的 R 但我建議 Y
+    img = image if image.dtype == np.uint8 else np.clip(image, 0, 255).astype(np.uint8)
+    if use_y:
+        y = (0.299*img[:,:,0] + 0.587*img[:,:,1] + 0.114*img[:,:,2]).astype(np.uint8)
+    else:
+        y = img[:,:,0]
 
-	# 簡化霧氣估算：使用 R channel 作為灰階
-	gray = img[:, :, 0]
-	height, width = gray.shape
-	total_pixels = height * width
+    H, W = y.shape
+    th, tw = H//tile, W//tile
+    scores = []
 
-	# 計算基本統計量
-	max_val = np.max(gray)
-	min_val = np.min(gray)
-	avg_intensity = np.mean(gray)
+    for i in range(tile):
+        for j in range(tile):
+            patch = y[i*th:(i+1)*th, j*tw:(j+1)*tw]
+            if patch.size == 0: 
+                continue
 
-	# 計算動態範圍
-	dynamic_range = max_val - min_val
+            max_val = patch.max()
+            min_val = patch.min()
+            avg_intensity = patch.mean()
+            dynamic_range = max_val - min_val
+            avg_deviation = np.mean(np.abs(patch - avg_intensity))
 
-	# 計算平均偏差
-	avg_deviation = np.mean(np.abs(gray - avg_intensity))
+            # 邊緣：可視邊比例
+            diff_h = np.abs(patch[:,1:].astype(np.int16) - patch[:,:-1].astype(np.int16))
+            diff_v = np.abs(patch[1:,:].astype(np.int16) - patch[:-1,:].astype(np.int16))
+            grad = np.zeros_like(patch, dtype=np.float32)
+            grad[:,1:] += diff_h
+            grad[1:,:] += diff_v
+            # 自適應邊緣閾值：patch 內分位數
+            thr = np.percentile(grad, 75)
+            visible_edge_ratio = (grad > max(thr, 1)).mean()  # 0~1
 
-	# 計算局部差異（水平和垂直梯度）
-	diff_h = np.abs(gray[:, :-1].astype(np.int16) - gray[:, 1:].astype(np.int16))
-	diff_v = np.abs(gray[:-1, :].astype(np.int16) - gray[1:, :].astype(np.int16))
-	avg_local_diff = (np.sum(diff_h) + np.sum(diff_v)) / (2 * total_pixels)
+            # 重新映射成霧分數（越霧 → 越高）
+            # 動態範圍：用相對尺度避免固定 240/100
+            dr_score = 100 * (1 - np.clip(dynamic_range/255.0, 0, 1))  # 大範圍→低分，小範圍→高分
+            dev_score = 100 * (1 - np.clip(avg_deviation/64.0, 0, 1))  # 粗略縮放，可再校正
+            edge_score = 100 * (1 - np.clip(visible_edge_ratio/0.12, 0, 1))  # 12% 可視邊當作「足夠清晰」
 
-	# 計算霧氣評分
-	# 基於動態範圍 (權重 50%)
-	if dynamic_range >= 240:
-		fog_score_range = 0
-	elif dynamic_range <= 100:
-		fog_score_range = 100
-	else:
-		fog_score_range = 100 - ((dynamic_range - 100) / 140.0) * 100
+            fog_score_tile = (dr_score*2 + dev_score + edge_score) / 4
+            scores.append(fog_score_tile)
 
-	# 基於平均偏差 (權重 25%)
-	if avg_deviation >= 60:
-		fog_score_deviation = 0
-	elif avg_deviation <= 20:
-		fog_score_deviation = 100
-	else:
-		fog_score_deviation = 100 - ((avg_deviation - 20) / 40.0) * 100
+    if not scores:
+        fog_score = 50.0
+    else:
+        # 2) 用高分位數捕捉局部濃霧
+        fog_score = float(np.percentile(scores, percentile))
 
-	# 基於局部差異 (權重 25%)
-	if avg_local_diff >= 10:
-		fog_score_edge = 0
-	elif avg_local_diff <= 1:
-		fog_score_edge = 100
-	else:
-		fog_score_edge = 100 - ((avg_local_diff - 1) / 9.0) * 100
+    fog_score = np.clip(fog_score, 0, 100)
+    BestPsi = 0.011099 * fog_score + 0.746386
+    return BestPsi
 
-	# 綜合評分
-	fog_score = (fog_score_range * 2 + fog_score_deviation + fog_score_edge) / 4
-	fog_score = np.clip(fog_score, 0, 100)
-
-	# 計算最佳 PSI 值
-	BestPsi = 0.011099 * fog_score + 0.746386
-	BestPsi = np.clip(BestPsi, 0.7, 1.2)
-	return BestPsi
 
 
 
@@ -124,17 +109,16 @@ def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	A = H_ds[y, x, :]  # 大氣光向量
 
 	# Calculate optimal PSI based on fog estimation
-	BestPsi = predict_psi(hazy_image)
-	psi = BestPsi
-
+	psi = predict_psi(hazy_image)
+	
 	# 使用原始全解析度圖像進行後續處理：對每個通道進行歸一化(除以 A)
 	H_norm = np.empty_like(H, dtype=np.float32)
 	for c in range(3):
 		H_norm[:, :, c] = H[:, :, c] / (A[c] + epsilon)
-
+	
 	# 計算歸一化圖像的平均強度 K（每個像素的均值）
 	K = np.mean(H_norm, axis=2)
-
+	
 	# 計算飽和度 S，公式：S = 1 - (min(R_norm, G_norm, B_norm) / (K + epsilon))
 	min_norm = np.min(H_norm, axis=2)
 
@@ -142,10 +126,10 @@ def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	t = (temp - psi*3*K*min_norm) / (temp + epsilon)
 	# 限制傳輸圖的下界
 	t = np.clip(t, t0, 1)
-
+	
 	# 利用傳輸圖恢復無霧圖像： D(x) = (H(x) - A) / t(x) + A
 	t_expanded = t[:, :, np.newaxis]
 	D = (H - A) / t_expanded + A
 	D = np.clip(D, 0, 255).astype(np.uint8)
 
-	return D, A, BestPsi
+	return D, A

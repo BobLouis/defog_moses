@@ -13,9 +13,9 @@ from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
 from defog_proposed_psi_fog_esti_corr_clean import defog_img
-defog_version = "defog_proposed_psi_fog_esti_corr_clean"
-dataset = "OHaze"
-# dataset = "SOTS_out"
+defog_version = "defog_proposed_fog_esti_clip"
+# dataset = "OHaze"
+dataset = "SOTS_inout"
 
 def main():
     hazy_dir = f"./dataset/{dataset}/hazy"
@@ -26,6 +26,10 @@ def main():
     # os.makedirs(output_dark_dir, exist_ok=True)
 
     hazy_files = sorted(glob(os.path.join(hazy_dir, "*.png")))
+
+    # 用於記錄所有的 BestPsi 值
+    bestpsi_list = []
+    bestpsi_records = []
 
     for hazy_path in hazy_files:
         full_name = os.path.splitext(os.path.basename(hazy_path))[0]
@@ -40,17 +44,45 @@ def main():
             H = np.array(img)
 
             start_time = time.time()
-            defog_output, A = defog_img(H)
+            defog_output, A, BestPsi = defog_img(H)
             end_time = time.time()
             diff_time = end_time - start_time
 
             Image.fromarray(defog_output).save(output_defog_path)
 
+            # 記錄 BestPsi 值
+            bestpsi_list.append(BestPsi)
+            bestpsi_records.append({"Image": base_name, "BestPsi": BestPsi})
+
             print(f"大氣光 A: {A}")
+            print(f"BestPsi: {BestPsi:.6f}")
             print(f"執行時間 = {diff_time:.3f} 秒 \t {int(diff_time*1000)} 毫秒")
 
         except Exception as e:
             print(f"處理 {hazy_path} 時發生錯誤: {e}")
+
+    # 計算並顯示 BestPsi 的平均值
+    if bestpsi_list:
+        avg_bestpsi = np.mean(bestpsi_list)
+        print(f"\n{'='*60}")
+        print(f"BestPsi 平均值: {avg_bestpsi:.6f}")
+        print(f"總共處理 {len(bestpsi_list)} 張圖片")
+        print(f"{'='*60}")
+
+        # 儲存 BestPsi 記錄到 TXT
+        os.makedirs(f"./dataset/{dataset}/report", exist_ok=True)
+        txt_path = f"./dataset/{dataset}/report/bestpsi_{defog_version}.txt"
+
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write(f"BestPsi 記錄\n")
+            f.write(f"{'='*60}\n\n")
+            for record in bestpsi_records:
+                f.write(f"{record['Image']}: {record['BestPsi']:.6f}\n")
+            f.write(f"\n{'='*60}\n")
+            f.write(f"平均值: {avg_bestpsi:.6f}\n")
+            f.write(f"總共處理 {len(bestpsi_list)} 張圖片\n")
+
+        print(f"BestPsi 記錄已儲存到：{txt_path}\n")
 
 
 def compute_psnr(defogged_image, clear_image_path, Xsize, Ysize):

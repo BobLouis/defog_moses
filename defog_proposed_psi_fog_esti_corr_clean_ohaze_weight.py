@@ -88,8 +88,8 @@ def predict_psi(image):
 	fog_score = np.clip(fog_score, 0, 100)
 
 	# 計算最佳 PSI 值
-	BestPsi = 0.011099 * fog_score + 0.746386
-	BestPsi = np.clip(BestPsi, 0.7, 1.2)
+	BestPsi = 0.008125 * fog_score + 0.638737
+
 	return BestPsi
 
 

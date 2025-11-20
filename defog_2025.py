@@ -1,99 +1,111 @@
 import numpy as np
-from scipy.ndimage import minimum_filter
 
-def defog_img(hazy_image, window_size=15, t0=0.1, beta=1.0, epsilon=1e-6):
+def defog_img(hazy_image, psi=1.0, t0=0.1, epsilon=1e-6):
     """
-    論文方法：SLAEM + DMTME + SRM
+    基於 IEEE VLSI 2025 論文 "Efficient Pipelined Hardware Architecture for 
+    Depth-Map-Based Image Dehazing System" 的去霧實作。
+    
+    主要模組:
+    1. AALE: Saturation-Based Local Airlight Estimation (飽和度局部大氣光估計)
+    2. DMTME: Depth-Map-Based Transmission Map Estimation (深度圖傳輸圖估計)
+
     參數:
-        hazy_image: (H,W,3) uint8 RGB
-        window_size: 暗通道最小濾波視窗 (建議 15)
-        t0: 傳輸圖下界 (對應式(5)中的 t0，常見 0.1~0.2)
-        beta: 介質消光係數 β (式(13))，可依能見度調整
-        epsilon: 避免除零
-    回傳:
-        D: 去霧後影像 (uint8)
-        A: 全域空氣光向量 (float32, 長度3，0~255)
-    依據論文：
-      - 全域空氣光 A_global：由暗通道最大值像素取得 (式(6))
-      - 局部空氣光 A_local：SLAEM (式(7), (10), (12))
-      - 透射率 t：DMTME，d = θ0 + θ1*V + θ2*S；t = exp(-β d) (式(14), (13))
-      - 復原：J = (I - A_local)/max(t,t0) + A_local (式(5))
+    hazy_image: 輸入圖像 (RGB, np.uint8)
+    psi: 論文中的 beta 係數，控制去霧程度 (默認 1.0，可調大以增強去霧)
+    t0: 傳輸圖下界 (論文建議 0.1)
+    epsilon: 防止除零的小常數
+
+    返回:
+    D: 去霧後的圖像 (np.uint8)
+    A_global: 全域大氣光向量 (用於顯示或兼容性)
     """
-    # ------------------------------------------------------------
-    # 0) 預處理：轉 float、正規化到 [0,1]
-    # ------------------------------------------------------------
-    Iu8 = hazy_image
-    H, W = Iu8.shape[:2]
-    I = Iu8.astype(np.float32) / 255.0  # I(z) ∈ [0,1]
+    
+    # 1. 預處理: 轉換為 0-1 float
+    H = hazy_image.astype(np.float32) / 255.0
+    h, w, c = H.shape
+    
+    # 2. 計算基礎統計量 (Pixel-wise, 無窗口操作)
+    # I_min: 每個像素 RGB 中的最小值 (Eq. 1 的簡化硬體版)
+    I_min = np.min(H, axis=2)
+    # I_max: 每個像素 RGB 中的最大值 (即 V_I, Eq. 16)
+    I_max = np.max(H, axis=2)
+    # I_int: 每個像素的強度均值 (Eq. 10)
+    I_int = np.mean(H, axis=2)
+    
+    # ---------------------------------------------------------
+    # 3. AALE: 自適應大氣光估計 (Adaptive Atmospheric Light Estimation)
+    # ---------------------------------------------------------
+    
+    # 3.1 全域大氣光 (Global Airlight) - Eq. 6
+    # 論文使用 I_min 作為暗通道 I_dark
+    I_dark = I_min 
+    # 找到暗通道中最亮的位置
+    flat_idx = np.argmax(I_dark)
+    y_idx, x_idx = np.unravel_index(flat_idx, I_dark.shape)
+    A_global = H[y_idx, x_idx, :] # (3,) vector
+    
+    # 3.2 局部大氣光 (Local Airlight) - Eq. 7, Eq. 12
+    # 計算飽和度比率 I_sat (Eq. 12)
+    # I_sat = I_dark / (I_int + I_dark)
+    I_sat = I_dark / (I_int + I_dark + epsilon)
+    
+    # 計算 Eq. 7 中的修正項
+    # Term X = [(I_int - I_dark) * (I_dark + I_int)] / I_sat
+    # 也就是 (I_int^2 - I_dark^2) / I_sat
+    term_numerator = (I_int - I_dark) * (I_dark + I_int)
+    term_correction = term_numerator / (I_sat + epsilon)
+    
+    # 擴展維度以進行廣播運算 (H, W, 1)
+    I_sat_exp = I_sat[:, :, np.newaxis]
+    term_correction_exp = term_correction[:, :, np.newaxis]
+    
+    # 計算 A_local (Eq. 7)
+    # A_local = A_global * I_sat - A_global * correction
+    # 注意：根據公式特性，高對比區域(I_sat小)會被大幅減去，這符合物理特性(物體反射光不應包含大氣光)
+    A_local = A_global * I_sat_exp - A_global * term_correction_exp
+    
+    # 限制範圍，避免負值 (因公式中的減法可能導致負值)
+    A_local = np.clip(A_local, 0.0, 1.0)
 
-    # 分離通道
-    R = I[:, :, 0]
-    G = I[:, :, 1]
-    B = I[:, :, 2]
+    # ---------------------------------------------------------
+    # 4. DMTME: 深度圖與傳輸圖估計
+    # ---------------------------------------------------------
+    
+    # 4.1 深度圖估計 d(z) - Eq. 14, 15, 16
+    # V_I = I_max (已計算)
+    # S_I_depth = 1 - min/max (Eq. 15) - 注意這裡的 S_I 定義與 AALE 不同
+    S_I_depth = 1.0 - (I_min / (I_max + epsilon))
+    
+    # 論文參數: theta0=0.12, theta1=0.96, theta2=-0.78
+    theta_0 = 0.12
+    theta_1 = 0.96
+    theta_2 = -0.78
+    
+    d_z = theta_0 + theta_1 * I_max + theta_2 * S_I_depth
+    
+    # 4.2 傳輸圖估計 t(z) - Eq. 13
+    # t(z) = exp(-beta * d(z))
+    # 這裡將輸入參數 psi 作為 beta 使用
+    beta = psi 
+    t = np.exp(-beta * d_z)
+    
+    # 限制傳輸圖下界 (Eq. 5 context)
+    t = np.clip(t, t0, 1.0)
+    
+    # ---------------------------------------------------------
+    # 5. 場景恢復 (Scene Recovery)
+    # ---------------------------------------------------------
+    
+    # J(z) = (I(z) - A_local) / t(z) + A_local (Eq. 5 變體)
+    t_expanded = t[:, :, np.newaxis]
+    
+    D = (H - A_local) / t_expanded + A_local
+    
+    # 後處理: Clip 到 0-1 並轉回 uint8
+    D = np.clip(D, 0.0, 1.0)
+    D = (D * 255).astype(np.uint8)
+    
+    # 將 A_global 轉回 0-255 uint8 格式以便顯示
+    A_global_uint8 = (A_global * 255).astype(np.uint8)
 
-    # ------------------------------------------------------------
-    # 1) 暗通道 & 全域空氣光 A_global (式(6))
-    #    暗通道：先對每像素取 min(R,G,B)，再以 window_size 做最小濾波
-    # ------------------------------------------------------------
-    per_pixel_min = np.minimum(np.minimum(R, G), B)
-    dark_channel = minimum_filter(per_pixel_min, size=window_size)
-
-    # 取暗通道最大值位置，以原圖該像素的 RGB 作為 A_global
-    idx = np.argmax(dark_channel)
-    y, x = np.unravel_index(idx, dark_channel.shape)
-    A_global = I[y, x, :].copy()  # in [0,1], shape (3,)
-
-    # ------------------------------------------------------------
-    # 2) SLAEM：飽和度式推導的局部空氣光 A_local (式(7), (10), (12))
-    #    I_int(z) = (R+G+B)/3   (式(10))
-    #    I_dark(z) = min(R,G,B)（像素級）
-    #    Isat(z) = I_dark / (I_int + I_dark) (式(12))
-    #    A_local(z) = A_global * [ Isat(z) - ((I_int - I_dark)*(I_dark + I_int))/Isat(z) ] (式(7))
-    #    ※ 這裡係數為逐像素的純量，乘上向量 A_global → 得到每像素的 RGB 向量 A_local
-    # ------------------------------------------------------------
-    I_int = (R + G + B) / 3.0
-    I_dark_pix = per_pixel_min  # 不再做視窗，依論文推導採像素級
-
-    Isat = I_dark_pix / (I_int + I_dark_pix + epsilon)  # (12)
-
-    # 依式(7)的純量係數（避免數值發散，做輕量裁切）
-    coef = Isat - ((I_int - I_dark_pix) * (I_dark_pix + I_int)) / (Isat + epsilon)
-    # 適度限制係數範圍，避免極端像素造成過度放大/反相（可視資料集微調）
-    coef = np.clip(coef, 0.0, 2.0)
-
-    # 廣播 A_local：每像素 scalar * 向量 A_global
-    A_local = np.dstack([coef * A_global[0],
-                         coef * A_global[1],
-                         coef * A_global[2]])  # shape (H,W,3), ∈ [0, ~2]
-
-    # ------------------------------------------------------------
-    # 3) DMTME：深度與透射率 (式(14) → 式(13))
-    #    SI(z) = 1 - min/max ； VI(z) = max
-    #    d(z) = θ0 + θ1*VI + θ2*SI
-    #    t(z) = exp(-β d(z))
-    #    係數採論文引用之最佳化值：θ0=0.12, θ1=0.96, θ2=-0.78
-    # ------------------------------------------------------------
-    I_min = per_pixel_min
-    I_max = np.maximum(np.maximum(R, G), B)
-
-    SI = 1.0 - (I_min / (I_max + epsilon))  # (15)
-    VI = I_max                               # (16)
-
-    theta0, theta1, theta2 = 0.12, 0.96, -0.78  # (14) 引用值
-    d = theta0 + theta1 * VI + theta2 * SI     # (14)
-
-    t = np.exp(-beta * d).astype(np.float32)   # (13)
-    t = np.clip(t, t0, 1.0)                    # (5) 的下界保護
-
-    # ------------------------------------------------------------
-    # 4) 場景復原 SRM (式(5))：J = (I - A_local)/t + A_local
-    # ------------------------------------------------------------
-    t3 = t[:, :, None]  # 擴展至三通道
-    J = (I - A_local) / t3 + A_local
-    J = np.clip(J, 0.0, 1.0)
-
-    # 轉回 uint8；A_global 回傳 0~255 向量，便於與你原流程一致
-    D = (J * 255.0 + 0.5).astype(np.uint8)
-    A_vec_255 = (A_global * 255.0).astype(np.float32)
-
-    return D, A_vec_255
+    return D, A_global_uint8, 1
