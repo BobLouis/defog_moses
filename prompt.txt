@@ -1,0 +1,5 @@
+我想要做一個把圖片切成20等份的方式  然後每一section去算他的A 大氣光值 產生一個Best psi 所以會有一個A array len 是 20
+  但不是同一個section 內的A  都是一樣的 因為如果一個section 一個A  會造成一個問題 照片會看起來分界感很重  會一條一條線的
+  所以需要再section的橋接處有一段 padding 可以銜接兩個section的線性A 轉換 就是A 變化量不要大於1的感覺  所以要設4個變數
+  第一個是section 的數量  由上往下 第二個是padding的長度  第三個是 n 每n個pixel的變化量  第四個是 padding
+  每n個pixel的變化量'/Users/hongweichen/Documents/實驗室/論文/defog/昱恩交接/img_soft/defog_proposed_atmo_section_claude.py'

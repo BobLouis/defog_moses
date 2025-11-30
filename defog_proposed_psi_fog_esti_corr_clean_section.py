@@ -165,6 +165,82 @@ def predict_psi_v2(image):
     return final_psi
 
 
+def get_section_psi_map(image, section_count=20, padding_length=50, psi_change_n=10, psi_change_limit=0.02):
+    """
+    Generate a Psi map with section-based estimation and smooth transitions.
+    
+    Parameters:
+    - image: Input image.
+    - section_count: Number of vertical sections.
+    - padding_length: Length of the transition padding between sections (pixels).
+    - psi_change_n: The 'n' in 'change per n pixels'.
+    - psi_change_limit: Max allowed Psi change per n pixels.
+    """
+    h, w = image.shape[:2]
+    section_height = h // section_count
+    
+    # 1. Calculate Psi for each section
+    psi_values = []
+    for i in range(section_count):
+        start_y = i * section_height
+        end_y = (i + 1) * section_height if i < section_count - 1 else h
+        
+        # Ensure we have a valid crop
+        if start_y >= h:
+            break
+            
+        section_img = image[start_y:end_y, :]
+        # If section is too small, use global or previous
+        if section_img.shape[0] == 0:
+            psi_values.append(psi_values[-1] if psi_values else 1.0)
+            continue
+            
+        psi = predict_psi_v2(section_img)
+        psi_values.append(psi)
+    
+    # 2. Initialize map with block values
+    psi_map = np.zeros((h, w), dtype=np.float32)
+    
+    for i in range(len(psi_values)):
+        start_y = i * section_height
+        end_y = (i + 1) * section_height if i < section_count - 1 else h
+        psi_map[start_y:end_y, :] = psi_values[i]
+        
+    # 3. Smooth the boundaries (Padding)
+    half_padding = padding_length // 2
+    
+    # Check slope constraint (informative for now, or could be used to adjust padding)
+    limit_slope = psi_change_limit / psi_change_n
+    
+    for i in range(len(psi_values) - 1):
+        # Boundary y coordinate
+        b_y = (i + 1) * section_height
+        
+        # Define transition range
+        t_start = max(0, b_y - half_padding)
+        t_end = min(h, b_y + half_padding)
+        t_len = t_end - t_start
+        
+        if t_len > 0:
+            psi_prev = psi_values[i]
+            psi_next = psi_values[i+1]
+            
+            # Check if transition is too steep
+            actual_change = abs(psi_next - psi_prev)
+            if t_len > 0:
+                actual_slope = actual_change / t_len
+                if actual_slope > limit_slope:
+                    print(f"Warning: Psi change at section {i}-{i+1} exceeds limit! Slope: {actual_slope:.5f} > {limit_slope:.5f}")
+            
+            # Linear interpolation
+            # Create a vertical gradient (column vector)
+            gradient = np.linspace(psi_prev, psi_next, t_len).astype(np.float32)
+            # Broadcast to width
+            psi_map[t_start:t_end, :] = gradient[:, np.newaxis]
+            
+    return psi_map, psi_values
+
+
 def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	"""
 	基於論文方法對輸入的 hazy 圖像進行去霧處理，返回無霧圖像、暗通道圖像、大氣光和傳輸圖。
@@ -195,8 +271,28 @@ def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	A = H_ds[y, x, :]  # 大氣光向量
 
 	# Calculate optimal PSI based on fog estimation
-	BestPsi = predict_psi_v2(hazy_image)
-	psi = BestPsi
+	# BestPsi = predict_psi_v2(hazy_image)
+	# psi = BestPsi
+	
+	# Use Section-based Psi Map
+	# Configurable variables
+	SECTION_COUNT = 20
+	PADDING_LENGTH = 50 # Adjust as needed
+	PSI_CHANGE_N = 10
+	PSI_CHANGE_LIMIT = 0.02
+	
+	psi_map, psi_list = get_section_psi_map(
+		hazy_image, 
+		section_count=SECTION_COUNT, 
+		padding_length=PADDING_LENGTH,
+		psi_change_n=PSI_CHANGE_N,
+		psi_change_limit=PSI_CHANGE_LIMIT
+	)
+	
+	# For return value, maybe return the average or the list? 
+	# The original code returned a single BestPsi. Let's return the mean for compatibility, or the list.
+	BestPsi = np.mean(psi_list)
+	psi = psi_map # psi is now a map (H, W)
 
 	# 使用原始全解析度圖像進行後續處理：對每個通道進行歸一化(除以 A)
 	H_norm = np.empty_like(H, dtype=np.float32)

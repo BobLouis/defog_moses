@@ -12,9 +12,9 @@ import pandas as pd
 from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
-from defog_proposed_psi_fog_esti_corr_clean import defog_img
-defog_version = "defog_proposed_fog_esti_clip"
-# dataset = "OHaze"
+from defog_proposed_atmo_section_claude import defog_img
+defog_version = "defog_proposed_atmo_section_claude"
+# dataset = "OHaze_lite"
 dataset = "SOTS_inout"
 
 def main():
