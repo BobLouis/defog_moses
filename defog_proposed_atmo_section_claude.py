@@ -25,9 +25,9 @@ S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
 
 # ========== 全域參數設定 ==========
 # 分區段處理參數
-SECTION_COUNT = 20          # 將圖片從上到下切成的區段數量
-PADDING_LENGTH = 50         # 區段交界處的padding長度（像素）
-A_CHANGE_N = 1              # 每n個pixel的A變化（區段內）
+SECTION_COUNT = 2        # 將圖片從上到下切成的區段數量
+PADDING_LENGTH = 100         # 區段交界處的padding長度（像素）
+A_CHANGE_N = 2              # 每n個pixel的A變化（區段內）
 A_CHANGE_LIMIT = 1          # padding區域內A值變化的步進（每n個pixel）
 
 # 是否使用分區段處理（True: 使用分區段, False: 使用傳統單一A值）
@@ -229,7 +229,7 @@ def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 
 			# 當前區段的A值
 			A_current = A_values[i]
-
+			print("section", i, "A_current", A_current)
 			# 計算padding區域
 			if i < SECTION_COUNT - 1:
 				# 不是最後一個區段，需要考慮與下一個區段的過渡

@@ -24,6 +24,8 @@ S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
 """
 
 def predict_psi(image):
+	# AVERAGE,20.3747,0.8434,7.4070 inout 
+	# AVERAGE,16.4091,0.6092,15.6578  Ohaze
 	"""
 	Calculate best PSI value based on fog score estimation.
 	Parameters:
@@ -92,78 +94,6 @@ def predict_psi(image):
 	BestPsi = np.clip(BestPsi, 0.7, 1.2)
 	return BestPsi
 
-def predict_psi_v2(image):
-    """
-    基於「平均霧濃度 (Density)」改進的 PSI 預測函數。
-    改進點：
-    1. 使用 Dark Channel Mean (暗通道均值) 判斷霧濃度，比單純對比度更準確。
-    2. 引入 Saturation Mean (飽和度均值)，霧越濃飽和度越低。
-    3. 對於極高濃度的霧 (O-Haze)，限制 Psi 的上限，防止過度除霧導致的破圖。
-    
-    Returns:
-    BestPsi: 推薦的 Psi 值，範圍通常在 [0.85, 1.15] 之間。
-    """
-    # 1. 格式處理
-    if image.dtype == np.uint8:
-        img = image.astype(np.float32) / 255.0
-    else:
-        img = image
-
-    # 2. 計算特徵圖
-    # Dark Channel: 取 RGB 中最小的通道 (代表該像素最「不亮」的程度)
-    # 霧越濃，dark_channel 數值越高 (被大氣光 A 填滿)
-    dark_channel = np.min(img, axis=2)
-    
-    # Saturation: 飽和度 S = 1 - min/max
-    # 霧越濃，RGB 數值越接近，飽和度越低
-    max_ch = np.max(img, axis=2)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        saturation = 1.0 - (dark_channel / (max_ch + 1e-6))
-        # 處理除零異常
-        saturation[max_ch == 0] = 0
-
-    # 3. 計算全域統計指標
-    # avg_dark: 0.0 (無霧) ~ 1.0 (全白濃霧)
-    # 一般有霧圖像約在 0.3 ~ 0.7
-    avg_dark = np.mean(dark_channel)
-    
-    # avg_sat: 1.0 (鮮豔) ~ 0.0 (灰白)
-    avg_sat = np.mean(saturation)
-
-    # 4. 霧氣評分 (Fog Density Score)
-    # 邏輯：暗通道越高 + 飽和度越低 = 霧越濃
-    # 權重：暗通道佔 70%，飽和度佔 30%
-    # 我們希望 score 落在 0~1 之間
-    fog_density = (0.7 * avg_dark) + (0.3 * (1.0 - avg_sat))
-    
-    # 修正：O-Haze 的 fog_density 可能高達 0.6~0.8
-    # 一般戶外無霧圖像 fog_density 約為 0.1~0.2
-
-    print(f"Debug - Avg Dark: {avg_dark:.3f}, Avg Sat: {avg_sat:.3f}, Density: {fog_density:.3f}")
-
-    # 5. 映射到 PSI
-    # 您的原始邏輯是線性的，但對於 O-Haze 這種濃霧，
-    # Psi 如果太大 (如 > 1.2) 會導致畫面變黑或噪點爆炸。
-    # 建議策略：
-    # - 輕霧 (Density < 0.3): Psi 約 0.85 (保留一點氛圍，不需強力除霧)
-    # - 中霧 (Density 0.3~0.5): Psi 線性增加至 1.1
-    # - 濃霧 (Density > 0.5): Psi 稍微回落或持平，避免過度增強噪點 (Soft Clipping)
-    
-    # 簡單線性映射 (可根據需求調整斜率)
-    # 假設 Density 0.1 -> Psi 0.8
-    # 假設 Density 0.6 -> Psi 1.1
-    
-    # 公式：Psi = 0.6 * density + 0.74
-    raw_psi = 0.6 * fog_density + 0.74
-
-    # 6. 安全限制 (關鍵)
-    # O-Haze 這種濃霧，如果不希望過度除霧，要把上限壓低
-    # 這裡設定上限為 1.05 或 1.1，而非 1.2
-    # 下限設定為 0.85，避免對無霧圖像過度處理
-    final_psi = np.clip(raw_psi, 0.85, 1.3)
-
-    return final_psi
-
 
 def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	"""
@@ -195,7 +125,7 @@ def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
 	A = H_ds[y, x, :]  # 大氣光向量
 
 	# Calculate optimal PSI based on fog estimation
-	BestPsi = predict_psi_v2(hazy_image)
+	BestPsi = predict_psi(hazy_image)
 	psi = BestPsi
 
 	# 使用原始全解析度圖像進行後續處理：對每個通道進行歸一化(除以 A)
