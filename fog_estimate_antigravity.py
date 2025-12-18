@@ -8,8 +8,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 
-# dataset = "SOTS_inout"
-dataset = "OHaze"
+dataset = "SOTS_inout"
+# dataset = "OHaze"
 
 def predict_psi(image):
 	# AVERAGE,20.3747,0.8434,7.4070 inout 
@@ -19,7 +19,7 @@ def predict_psi(image):
 	Parameters:
 	image: Input image (RGB, np.uint8 or np.float32)
 	Returns:
-	BestPsi: Optimal PSI value calculated as 0.011099 × FogScore + 0.746386
+	BestPsi: Optimal PSI value predicted using learned weights from component scores.
 	"""
 	# Ensure image is in uint8 format
 	if image.dtype == np.float32:
@@ -74,10 +74,20 @@ def predict_psi(image):
 		fog_score_edge = 100 - ((avg_local_diff - 1) / 9.0) * 100
 
 	# 綜合評分
-	fog_score = (fog_score_range * 2 + fog_score_deviation + fog_score_edge) / 4
-	fog_score = np.clip(fog_score, 0, 100)
+	# fog_score = (fog_score_range * 2 + fog_score_deviation + fog_score_edge) / 4
+	# fog_score = np.clip(fog_score, 0, 100)
 
-	return fog_score
+	# 使用優化後的線性回歸權重 (BestPsi = w1*Range + w2*Dev + w3*Edge + b)
+	# Coefficients: [0.00335279 0.00282501 0.00530094]
+	# Intercept: 0.6459711197436037
+	best_psi_predicted = (
+		0.00335279 * fog_score_range +
+		0.00282501 * fog_score_deviation +
+		0.00530094 * fog_score_edge +
+		0.64597112
+	)
+
+	return best_psi_predicted
 
 
 def main():
