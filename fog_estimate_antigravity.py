@@ -19,7 +19,8 @@ def predict_psi(image):
 	Parameters:
 	image: Input image (RGB, np.uint8 or np.float32)
 	Returns:
-	BestPsi: Optimal PSI value predicted using learned weights from component scores.
+	BestPsi: Optimal PSI value predicted using learned weights from advanced features 
+             (Dark Channel, Saturation, Contrast, Entropy, etc.).
 	"""
 	# Ensure image is in uint8 format
 	if image.dtype == np.float32:
@@ -27,64 +28,74 @@ def predict_psi(image):
 	else:
 		img = image
 
-	# 簡化霧氣估算：使用 R channel 作為灰階
-	gray = img[:, :, 0]
-	height, width = gray.shape
-	total_pixels = height * width
-
-	# 計算基本統計量
-	max_val = np.max(gray)
-	min_val = np.min(gray)
-	avg_intensity = np.mean(gray)
-
-	# 計算動態範圍
-	dynamic_range = max_val - min_val
-
-	# 計算平均偏差
-	avg_deviation = np.mean(np.abs(gray - avg_intensity))
-
-	# 計算局部差異（水平和垂直梯度）
-	diff_h = np.abs(gray[:, :-1].astype(np.int16) - gray[:, 1:].astype(np.int16))
-	diff_v = np.abs(gray[:-1, :].astype(np.int16) - gray[1:, :].astype(np.int16))
-	avg_local_diff = (np.sum(diff_h) + np.sum(diff_v)) / (2 * total_pixels)
-
-	# 計算霧氣評分
-	# 基於動態範圍 (權重 50%)
-	if dynamic_range >= 240:
-		fog_score_range = 0
-	elif dynamic_range <= 100:
-		fog_score_range = 100
+	# Convert to PIL/HSV for features
+	# Note: Image processing here is done on-the-fly. 
+	# To keep it matching exactly what was optimized, we replicate the feature extraction logic.
+	
+	if image.dtype == np.float32:
+		img_uint8 = np.clip(image, 0, 255).astype(np.uint8)
 	else:
-		fog_score_range = 100 - ((dynamic_range - 100) / 140.0) * 100
+		img_uint8 = image
+		
+	img_pil = Image.fromarray(img_uint8)
+	img_hsv = np.array(img_pil.convert('HSV'))
+	img_gray = np.array(img_pil.convert('L')).astype(np.float32)
 
-	# 基於平均偏差 (權重 25%)
-	if avg_deviation >= 60:
-		fog_score_deviation = 0
-	elif avg_deviation <= 20:
-		fog_score_deviation = 100
-	else:
-		fog_score_deviation = 100 - ((avg_deviation - 20) / 40.0) * 100
+	# --- Feature Extraction ---
+	
+	# 1. Dark Channel Proxy (Mean) - Positive correlation with haze
+	min_rgb = np.min(img_uint8, axis=2)
+	dc_mean = np.mean(min_rgb)
+	dc_std = np.std(min_rgb)
 
-	# 基於局部差異 (權重 25%)
-	if avg_local_diff >= 10:
-		fog_score_edge = 0
-	elif avg_local_diff <= 1:
-		fog_score_edge = 100
-	else:
-		fog_score_edge = 100 - ((avg_local_diff - 1) / 9.0) * 100
+	# 2. Saturation (Std) - Haze reduces saturation variance
+	s_chan = img_hsv[:, :, 1]
+	sat_std = np.std(s_chan)
 
-	# 綜合評分
-	# fog_score = (fog_score_range * 2 + fog_score_deviation + fog_score_edge) / 4
-	# fog_score = np.clip(fog_score, 0, 100)
+	# 3. Contrast (Global RMS) - Haze reduces contrast
+	contrast = np.std(img_gray)
 
-	# 使用優化後的線性回歸權重 (BestPsi = w1*Range + w2*Dev + w3*Edge + b)
-	# Coefficients: [0.00335279 0.00282501 0.00530094]
-	# Intercept: 0.6459711197436037
+	# 4. Entropy
+	hist, _ = np.histogram(img_gray, bins=256, range=(0, 256), density=True)
+	hist = hist[hist > 0]
+	entropy = -np.sum(hist * np.log2(hist))
+
+	# 5. Sharpness (Laplacian)
+	# Slicing approach for speed
+	c = img_gray[1:-1, 1:-1]
+	n = img_gray[:-2, 1:-1] + img_gray[2:, 1:-1] + img_gray[1:-1, :-2] + img_gray[1:-1, 2:]
+	lap = np.abs(n - 4*c)
+	sharpness_mean = np.mean(lap)
+	sharpness_std = np.std(lap)
+
+	# 6. Basic RGB Means
+	r_mean = np.mean(img_uint8[:,:,0])
+	g_mean = np.mean(img_uint8[:,:,1])
+	# b_mean was not selected by Lasso as significant enough compared to others
+
+	# 7. Old Statistical Features (re-calc for model)
+	max_val = np.max(img_gray)
+	min_val = np.min(img_gray)
+	avg_intensity = np.mean(img_gray)
+	dyn_range = max_val - min_val
+	avg_dev = np.mean(np.abs(img_gray - avg_intensity))
+	
+	# --- Linear Regression Model (R2 ~ 0.48) ---
+	# Features selected: G_Mean, DC_Mean, Contrast, AvgDev, Sharpness_Std, R_Mean, DynRange, DC_Std, Sat_Std, Entropy, Sharpness_Mean
+	
 	best_psi_predicted = (
-		0.00335279 * fog_score_range +
-		0.00282501 * fog_score_deviation +
-		0.00530094 * fog_score_edge +
-		0.64597112
+		-0.015183 * g_mean +
+		0.012467 * dc_mean +
+		0.027052 * contrast +
+		-0.018002 * avg_dev +
+		-0.015769 * sharpness_std +
+		0.003979 * r_mean +
+		-0.003765 * dyn_range +
+		-0.012721 * dc_std +
+		0.006207 * sat_std +
+		-0.102047 * entropy +
+		0.007422 * sharpness_mean +
+		2.656480 # Intercept
 	)
 
 	return best_psi_predicted

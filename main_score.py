@@ -5,7 +5,7 @@ import time
 from PIL import Image
 from glob import glob
 from skimage.metrics import peak_signal_noise_ratio as calculate_psnr
-from skimage.metrics import structural_similarity as calculㄊate_ssim
+from skimage.metrics import structural_similarity as calculate_ssim
 from skimage.color import rgb2lab, deltaE_ciede2000
 from glob import glob
 import pandas as pd
@@ -13,8 +13,8 @@ from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
 # from defog_proposed_atmo_section_claude import defog_img
-from defog_proposed_psi_fog_esti_corr_clean_section import defog_img
-defog_version = "defog_proposed_psi_fog_esti_corr_clean_section"
+from defog_proposed_psi_fog_esti_corr_clean_lookuptable import defog_img
+defog_version = "defog_proposed_psi_fog_esti_corr_clean_lookuptable"
 # dataset = "OHaze"
 dataset = "SOTS_inout"
 
