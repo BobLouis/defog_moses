@@ -13,12 +13,13 @@ from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
 # from defog_proposed_atmo_section_claude import defog_img
-from defog_avsd_v5 import defog_img
-defog_version = "defog_avsd_v5"
-dataset = "OHaze_lite"
-# dataset = "SOTS_in"
+from defog_proposed_psi_fog_esti_corr_clean import defog_img
+defog_version = "defog_proposed_psi_fog_esti_corr_clean"
+# 定義要處理的所有 datasets
+# datasets = ["SOTS_in", "SOTS_out", "Ohaze"]
+datasets = ["SOTS_in", "SOTS_out", "Ohaze"]
 
-def main():
+def main(dataset):
     hazy_dir = f"./dataset/{dataset}/hazy"
     output_defog_dir = f"./dataset/{dataset}/result_{defog_version}"
     # output_dark_dir = f"./dataset/{dataset}/dark{defog_version}"
@@ -152,7 +153,7 @@ def compute_ciede2000(defogged_image, clear_image_path, Xsize, Ysize, sample_ste
         print(f"Error calculating CIEDE 2000: {e}")
         return 0
 
-def score():
+def score(dataset):
     clear_dir = f"./dataset/{dataset}/clear"
     defog_dir = f"./dataset/{dataset}/result_{defog_version}"
 
@@ -162,7 +163,7 @@ def score():
     avg_scores = {"PSNR": 0, "SSIM": 0, "CIEDE2000": 0}
     total = 0
 
-    for defog_path in tqdm(defog_files, desc="Scoring"):
+    for defog_path in tqdm(defog_files, desc=f"Scoring {dataset}"):
         base_name = os.path.splitext(os.path.basename(defog_path))[0].split('_')[0]
         clear_path = os.path.join(clear_dir, f"{base_name}_clear.png")
 
@@ -203,9 +204,50 @@ def score():
         csv_path = f"./dataset/{dataset}/report/score_{defog_version}.csv"
         df.to_csv(csv_path, index=False, float_format="%.4f")
         print(f"\n✅ 評分結果已儲存到：{csv_path}")
+        
+        return avg_scores
     else:
-        print("⚠️ 沒有成功評分的圖片。")
+        print(f"⚠️ {dataset} 沒有成功評分的圖片。")
+        return None
 
 if __name__ == "__main__":
-    main()
-    score()
+    # 儲存所有 datasets 的平均值
+    all_dataset_scores = {}
+    
+    for dataset in datasets:
+        print(f"\n{'#'*80}")
+        print(f"{'#'*80}")
+        print(f"############# 開始處理 Dataset: {dataset} #############")
+        print(f"{'#'*80}")
+        print(f"{'#'*80}\n")
+        
+        # 執行 main 處理霧化圖片
+        main(dataset)
+        
+        # 執行 score 計算評分
+        avg_scores = score(dataset)
+        
+        if avg_scores:
+            all_dataset_scores[dataset] = avg_scores
+    
+    # 顯示所有 datasets 的彙總結果
+    print(f"\n\n{'='*80}")
+    print(f"{'='*80}")
+    print(f"{'='*30} 所有 Datasets 的平均值彙總 {'='*30}")
+    print(f"{'='*80}")
+    print(f"{'='*80}\n")
+    
+    if all_dataset_scores:
+        # 建立表格標題
+        print(f"{'Dataset':<15} | {'PSNR':>10} | {'SSIM':>10} | {'CIEDE2000':>12}")
+        print(f"{'-'*15}-+-{'-'*10}-+-{'-'*10}-+-{'-'*12}")
+        
+        # 顯示每個 dataset 的平均值
+        for dataset, scores in all_dataset_scores.items():
+            print(f"{dataset:<15} | {scores['PSNR']:>10.4f} | {scores['SSIM']:>10.4f} | {scores['CIEDE2000']:>12.4f}")
+        
+        print(f"{'='*80}")
+        print(f"\n✅ 所有 datasets 處理完成！")
+    else:
+        print(f"⚠️ 沒有成功處理任何 dataset。")
+

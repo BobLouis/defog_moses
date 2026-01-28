@@ -90,7 +90,7 @@ def predict_psi(image):
 	fog_score = np.clip(fog_score, 0, 100)
 
 	# 建立 Lookup Table (減少電路面積)
-	lookup_table_size = 50
+	lookup_table_size = 10
 	
 	# 動態生成 Lookup Table (僅需執行一次或預先計算)
 	# Formula: BestPsi = 0.011099 * fog_score + 0.746386

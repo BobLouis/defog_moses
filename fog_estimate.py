@@ -8,8 +8,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 
-# dataset = "SOTS_inout"
-dataset = "OHaze"
+dataset = "SOTS_inout"
+# dataset = "OHaze"
 
 def predict_psi(image):
 	# AVERAGE,20.3747,0.8434,7.4070 inout 

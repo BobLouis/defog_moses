@@ -8,8 +8,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 
-dataset = "SOTS_inout"
-# dataset = "OHaze"
+# dataset = "SOTS_inout"
+dataset = "OHaze"
 
 def predict_psi(image):
 	# AVERAGE,20.3747,0.8434,7.4070 inout 
@@ -221,7 +221,7 @@ def merge_and_regression():
 	df_merged['Residual'] = y - y_pred
 
 	# Save merged data to CSV
-	output_path = f"./dataset/{dataset}/report/fog_grid.csv"
+	output_path = f"./dataset/{dataset}/report/fog_grid_antigravity.csv"
 	df_merged.to_csv(output_path, index=False, float_format="%.6f")
 
 	# Print regression results
