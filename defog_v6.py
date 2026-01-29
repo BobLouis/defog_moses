@@ -18,7 +18,7 @@ V6 新增: 動態 PSI
 """
 
 
-def defog_img(hazy_image, psi_min=0.2, psi_max=1.5, t0=0.2, window_size=8, buffer_size=8, epsilon=1e-6):
+def defog_img(hazy_image, psi_min=0.52, psi_max=1.38, t0=0.25, window_size=8, buffer_size=8, epsilon=1e-6):
     """
     基於 proposed_v5 方法 + 動態 PSI 調整
 
@@ -52,7 +52,7 @@ def defog_img(hazy_image, psi_min=0.2, psi_max=1.5, t0=0.2, window_size=8, buffe
     K = np.mean(H_norm, axis=2)
     min_norm = np.min(H_norm, axis=2)
 
-    # ========== 計算霧濃度 (每個 pixel 與 A 的距離) ==========
+    # ========== 計算霧濃度 (每個 pixel 與 A 的距離，原始方法) ==========
     # fog_density: 0 = 接近 A (霧濃), 100 = 遠離 A (無霧)
     diff = np.abs(H - A)
     relative_diff = diff / (A + epsilon)
@@ -93,12 +93,8 @@ def defog_img(hazy_image, psi_min=0.2, psi_max=1.5, t0=0.2, window_size=8, buffe
             # 移動指標 (環形)
             head = (head + 1) % buffer_size
 
-            # 計算平滑後的 PSI (平均值)
+            # 計算平滑後的 PSI (平均值) - 不量化，保持連續性
             smoothed_psi = buffer_sum / buffer_count
-
-            # 量化到 100 等份
-            psi_step = psi_range / 100
-            smoothed_psi = round(smoothed_psi / psi_step) * psi_step
             smoothed_psi = np.clip(smoothed_psi, psi_min, psi_max)
 
             psi_map[i, j] = smoothed_psi
@@ -225,7 +221,7 @@ if __name__ == "__main__":
                 H = np.array(img)
 
                 start_time = time.time()
-                defog_output, A, psi_map = defog_img(H)
+                defog_output, A, psi_map = defog_img(H, buffer_size=16)
                 end_time = time.time()
                 diff_time = end_time - start_time
 
