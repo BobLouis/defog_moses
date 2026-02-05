@@ -147,8 +147,8 @@ if __name__ == "__main__":
 
     # ========== 設定版本與 dataset ==========
     defog_version = "defog_v6_method1"
-    dataset = "OHaze_lite"
-    # dataset = "SOTS_in"
+    # dataset = "OHaze"
+    dataset = "SOTS_out"
 
     def compute_psnr(defogged_image, clear_image_path, Xsize, Ysize):
         """計算無霧圖像與清晰參考圖像之間的 PSNR 值"""
