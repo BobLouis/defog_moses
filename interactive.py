@@ -5,12 +5,16 @@ from PIL import Image
 import cv2
 import os
 from glob import glob
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+from skimage.color import rgb2lab, deltaE_ciede2000
 
 
 # ========== Configuration ==========
 DATASET_NAME = "OHaze_lite"
 INPUT_DIR = f"./dataset/{DATASET_NAME}/hazy"
 OUTPUT_DIR = f"./dataset/{DATASET_NAME}/interactive_v6_output"
+CLEAR_DIR = f"./dataset/{DATASET_NAME}/clear"
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
 # Default parameters (scaled for trackbar)
 DEFAULT_PSI_MIN = 52       # 0.52 * 100
@@ -34,6 +38,60 @@ PSI_THRESHOLD_RANGE = 100   # Max 1.0 (PSI閾值)
 
 # Window size for preview
 PREVIEW_MAX_HEIGHT = 600
+
+# Modern UI Color Palette
+UI_COLORS = {
+    'bg_dark': (25, 25, 30),           # Very dark background
+    'bg_medium': (40, 42, 48),         # Medium background
+    'bg_light': (55, 58, 64),          # Light background
+    'accent_blue': (255, 180, 80),     # Warm blue accent
+    'accent_green': (120, 220, 120),   # Success green
+    'accent_orange': (80, 140, 255),   # Warning orange
+    'text_primary': (255, 255, 255),   # Primary text
+    'text_secondary': (180, 185, 200), # Secondary text
+    'text_dim': (120, 125, 140),       # Dim text
+    'border': (70, 75, 85),            # Border color
+    'highlight': (255, 200, 100),      # Highlight color
+}
+
+
+def list_image_files(directory, extensions=IMAGE_EXTENSIONS):
+    """Return sorted absolute image paths in the target directory."""
+    if not os.path.isdir(directory):
+        return []
+
+    files = []
+    for path in sorted(glob(os.path.join(directory, "*"))):
+        if os.path.splitext(path)[1].lower() in extensions:
+            files.append(os.path.abspath(path))
+    return files
+
+
+def normalize_filename_key(filename):
+    """Strip common suffixes (e.g., _hazy/_clear) for matching pairs."""
+    base = os.path.splitext(os.path.basename(filename))[0]
+    lowered = base.lower()
+    suffixes = [
+        "_hazy", "_clear", "_gt", "_ref", "_input", "_noisy",
+        "-hazy", "-clear", "-gt", "_h", "_c"
+    ]
+
+    for suffix in suffixes:
+        if lowered.endswith(suffix):
+            base = base[: -len(suffix)]
+            lowered = lowered[: -len(suffix)]
+    return lowered
+
+
+def build_clear_lookup(clear_dir):
+    """Create mapping from normalized image key to clear image path."""
+    lookup = {}
+    if not os.path.isdir(clear_dir):
+        return lookup
+
+    for path in list_image_files(clear_dir):
+        lookup[normalize_filename_key(path)] = path
+    return lookup
 
 
 def compute_atmospheric_light(image, window_size=8):
@@ -200,85 +258,330 @@ def create_heatmap(data, colormap=cv2.COLORMAP_JET):
     return heatmap
 
 
-def add_border(image, color=(200, 200, 200), thickness=2):
-    """Add border to image"""
+def add_border(image, color=(70, 75, 85), thickness=3):
+    """Add modern border to image"""
     return cv2.copyMakeBorder(image, thickness, thickness, thickness, thickness,
                              cv2.BORDER_CONSTANT, value=color)
 
 
-def add_label(image, text, bg_color=(50, 50, 50), text_color=(255, 255, 255)):
-    """Add label on top of image"""
+def add_label(image, text, bg_color=None, text_color=None, accent=False):
+    """Add modern label on top of image with gradient effect"""
+    if bg_color is None:
+        bg_color = UI_COLORS['bg_medium']
+    if text_color is None:
+        text_color = UI_COLORS['text_primary']
+
     h, w = image.shape[:2]
-    label_height = 50
-    label = np.full((label_height, w, 3), bg_color, dtype=np.uint8)
-    
-    # Add text
-    font_scale = 0.8
+    label_height = 55
+
+    # Create gradient background
+    label = np.zeros((label_height, w, 3), dtype=np.uint8)
+    for i in range(label_height):
+        alpha = i / label_height
+        color = tuple(int(bg_color[j] * (1 - alpha * 0.15)) for j in range(3))
+        label[i, :] = color
+
+    # Add accent bar if requested
+    if accent:
+        accent_color = UI_COLORS['accent_blue']
+        cv2.rectangle(label, (0, 0), (w, 4), accent_color, -1)
+
+    # Add text with shadow for depth
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.75
     thickness = 2
-    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
     text_x = (w - text_size[0]) // 2
-    text_y = (label_height + text_size[1]) // 2
-    
+    text_y = (label_height + text_size[1]) // 2 + 2
+
+    # Shadow
+    cv2.putText(label, text, (text_x + 2, text_y + 2),
+               font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+    # Main text
     cv2.putText(label, text, (text_x, text_y),
-               cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, thickness, cv2.LINE_AA)
-    
+               font, font_scale, text_color, thickness, cv2.LINE_AA)
+
     return np.vstack([label, image])
 
 
-def create_stats_panel(stats_lines, width=450, bg_color=(40, 40, 40), text_color=(255, 255, 255)):
-    """Create statistics panel"""
+def add_footer(image, text_lines, bg_color=None, text_color=None):
+    """Append a modern footer panel with metrics."""
+    if not text_lines:
+        return image
+
+    if bg_color is None:
+        bg_color = UI_COLORS['bg_dark']
+    if text_color is None:
+        text_color = UI_COLORS['text_primary']
+
+    h, w = image.shape[:2]
+    line_height = 32
+    padding = 15
+    footer_height = padding * 2 + line_height * len(text_lines)
+
+    # Create gradient footer
+    footer = np.zeros((footer_height, w, 3), dtype=np.uint8)
+    for i in range(footer_height):
+        alpha = i / footer_height
+        color = tuple(int(bg_color[j] * (1 + alpha * 0.2)) for j in range(3))
+        footer[i, :] = color
+
+    y = padding + 22
+    for line in text_lines:
+        # Color code based on metric type
+        if "PSNR" in line:
+            metric_color = UI_COLORS['accent_green']
+            bullet = "[P]"
+        elif "SSIM" in line:
+            metric_color = UI_COLORS['accent_blue']
+            bullet = "[S]"
+        elif "CIEDE" in line:
+            metric_color = UI_COLORS['accent_orange']
+            bullet = "[C]"
+        else:
+            metric_color = text_color
+            bullet = "[-]"
+
+        # Add bullet text
+        cv2.putText(
+            footer,
+            bullet,
+            (10, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            metric_color,
+            2,
+            cv2.LINE_AA,
+        )
+
+        cv2.putText(
+            footer,
+            line,
+            (50, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            metric_color,
+            2,
+            cv2.LINE_AA,
+        )
+        y += line_height
+
+    return np.vstack([image, footer])
+
+
+def pad_panel_to_height(image, target_height, color=None):
+    """Pad or trim an image panel to match the target height."""
+    if color is None:
+        color = UI_COLORS['bg_dark']
+
+    current_height = image.shape[0]
+    if current_height == target_height:
+        return image
+    if current_height > target_height:
+        return cv2.resize(image, (image.shape[1], target_height), interpolation=cv2.INTER_AREA)
+
+    pad_bottom = target_height - current_height
+    return cv2.copyMakeBorder(image, 0, pad_bottom, 0, 0,
+                              cv2.BORDER_CONSTANT, value=color)
+
+
+def create_navigation_bar(width, current_index, total_images, bg_color=None):
+    """Create a navigation bar with clickable buttons"""
+    if bg_color is None:
+        bg_color = UI_COLORS['bg_medium']
+
+    bar_height = 70
+    nav_bar = np.zeros((bar_height, width, 3), dtype=np.uint8)
+
+    # Gradient background
+    for i in range(bar_height):
+        alpha = i / bar_height
+        color = tuple(int(bg_color[j] * (1 + alpha * 0.15)) for j in range(3))
+        nav_bar[i, :] = color
+
+    # Button dimensions
+    button_width = 120
+    button_height = 45
+    button_y = (bar_height - button_height) // 2
+    button_spacing = 20
+
+    # Previous button
+    prev_x = 30
+    prev_button = (prev_x, button_y, prev_x + button_width, button_y + button_height)
+
+    # Next button
+    next_x = prev_x + button_width + button_spacing
+    next_button = (next_x, button_y, next_x + button_width, button_y + button_height)
+
+    # Draw buttons
+    button_color = UI_COLORS['bg_light']
+    border_color = UI_COLORS['accent_blue']
+
+    # Previous button
+    cv2.rectangle(nav_bar, (prev_button[0], prev_button[1]),
+                  (prev_button[2], prev_button[3]), button_color, -1)
+    cv2.rectangle(nav_bar, (prev_button[0], prev_button[1]),
+                  (prev_button[2], prev_button[3]), border_color, 2)
+
+    # Next button
+    cv2.rectangle(nav_bar, (next_button[0], next_button[1]),
+                  (next_button[2], next_button[3]), button_color, -1)
+    cv2.rectangle(nav_bar, (next_button[0], next_button[1]),
+                  (next_button[2], next_button[3]), border_color, 2)
+
+    # Add text to buttons
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness = 2
+    text_color = UI_COLORS['text_primary']
+
+    # Previous button text
+    prev_text = "<< PREV"
+    prev_size = cv2.getTextSize(prev_text, font, font_scale, thickness)[0]
+    prev_text_x = prev_button[0] + (button_width - prev_size[0]) // 2
+    prev_text_y = prev_button[1] + (button_height + prev_size[1]) // 2
+    cv2.putText(nav_bar, prev_text, (prev_text_x, prev_text_y),
+                font, font_scale, text_color, thickness, cv2.LINE_AA)
+
+    # Next button text
+    next_text = "NEXT >>"
+    next_size = cv2.getTextSize(next_text, font, font_scale, thickness)[0]
+    next_text_x = next_button[0] + (button_width - next_size[0]) // 2
+    next_text_y = next_button[1] + (button_height + next_size[1]) // 2
+    cv2.putText(nav_bar, next_text, (next_text_x, next_text_y),
+                font, font_scale, text_color, thickness, cv2.LINE_AA)
+
+    # Display current image index
+    info_text = f"Image {current_index + 1} / {total_images}"
+    info_size = cv2.getTextSize(info_text, font, 0.7, 2)[0]
+    info_x = next_button[2] + 40
+    info_y = bar_height // 2 + info_size[1] // 2
+    cv2.putText(nav_bar, info_text, (info_x, info_y),
+                font, 0.7, UI_COLORS['highlight'], 2, cv2.LINE_AA)
+
+    # Add Save and Reset buttons on the right
+    save_x = width - 260
+    reset_x = width - 130
+
+    save_button = (save_x, button_y, save_x + 120, button_y + button_height)
+    reset_button = (reset_x, button_y, reset_x + 120, button_y + button_height)
+
+    # Save button (green accent)
+    save_color = UI_COLORS['accent_green']
+    cv2.rectangle(nav_bar, (save_button[0], save_button[1]),
+                  (save_button[2], save_button[3]), button_color, -1)
+    cv2.rectangle(nav_bar, (save_button[0], save_button[1]),
+                  (save_button[2], save_button[3]), save_color, 2)
+
+    save_text = "SAVE (S)"
+    save_size = cv2.getTextSize(save_text, font, 0.55, thickness)[0]
+    save_text_x = save_button[0] + (120 - save_size[0]) // 2
+    save_text_y = save_button[1] + (button_height + save_size[1]) // 2
+    cv2.putText(nav_bar, save_text, (save_text_x, save_text_y),
+                font, 0.55, save_color, thickness, cv2.LINE_AA)
+
+    # Reset button (orange accent)
+    reset_color = UI_COLORS['accent_orange']
+    cv2.rectangle(nav_bar, (reset_button[0], reset_button[1]),
+                  (reset_button[2], reset_button[3]), button_color, -1)
+    cv2.rectangle(nav_bar, (reset_button[0], reset_button[1]),
+                  (reset_button[2], reset_button[3]), reset_color, 2)
+
+    reset_text = "RESET (R)"
+    reset_size = cv2.getTextSize(reset_text, font, 0.5, thickness)[0]
+    reset_text_x = reset_button[0] + (120 - reset_size[0]) // 2
+    reset_text_y = reset_button[1] + (button_height + reset_size[1]) // 2
+    cv2.putText(nav_bar, reset_text, (reset_text_x, reset_text_y),
+                font, 0.5, reset_color, thickness, cv2.LINE_AA)
+
+    # Return button rectangles for click detection
+    buttons = {
+        'prev': prev_button,
+        'next': next_button,
+        'save': save_button,
+        'reset': reset_button
+    }
+
+    return nav_bar, buttons
+
+
+def create_stats_panel(stats_lines, width=450, bg_color=None, text_color=None):
+    """Create modern statistics panel with visual hierarchy"""
+    if bg_color is None:
+        bg_color = UI_COLORS['bg_dark']
+    if text_color is None:
+        text_color = UI_COLORS['text_secondary']
+
     line_height = 28
-    padding = 20
+    padding = 25
     height = len(stats_lines) * line_height + padding * 2
-    
-    panel = np.full((height, width, 3), bg_color, dtype=np.uint8)
-    
+
+    # Create gradient background
+    panel = np.zeros((height, width, 3), dtype=np.uint8)
+    for i in range(height):
+        # Subtle vertical gradient
+        alpha = (i / height) * 0.1
+        color = tuple(int(bg_color[j] * (1 + alpha)) for j in range(3))
+        panel[i, :] = color
+
+    # Add decorative header bar
+    header_color = UI_COLORS['accent_blue']
+    cv2.rectangle(panel, (0, 0), (width, 5), header_color, -1)
+
     y = padding + 20
     for line in stats_lines:
         if line.strip() == "":
             y += line_height // 2
             continue
-            
-        # Bold for section headers
+
+        indent_level = len(line) - len(line.lstrip())
+        x_offset = padding + indent_level * 8
+
+        # Style based on content type
         if line.endswith(":") and not line.startswith("  "):
+            # Section headers
             font_scale = 0.65
             thickness = 2
-            color = (100, 200, 255)
-        else:
+            color = UI_COLORS['highlight']
+            # Add underline effect
+            text_size = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+            cv2.line(panel, (x_offset, y + 5), (x_offset + text_size[0], y + 5),
+                    UI_COLORS['border'], 1)
+        elif "Min:" in line or "Max:" in line or "Avg:" in line:
+            # Statistics values
             font_scale = 0.55
             thickness = 1
+            color = UI_COLORS['accent_green']
+        elif "Keys:" in line:
+            # Keyboard shortcuts section
+            font_scale = 0.6
+            thickness = 2
+            color = UI_COLORS['accent_orange']
+        else:
+            # Regular text
+            font_scale = 0.52
+            thickness = 1
             color = text_color
-        
-        cv2.putText(panel, line, (padding, y),
+
+        cv2.putText(panel, line, (x_offset, y),
                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness, cv2.LINE_AA)
         y += line_height
-    
+
     return panel
 
 
 class InteractiveDehazingV6:
     """Interactive Dehazing Application - V6 Method 1"""
-    
-    def __init__(self, image_path):
-        # Load image
-        self.image_path = image_path
-        self.image_name = os.path.basename(image_path)
-        
-        img = Image.open(image_path).convert('RGB')
-        self.image_original = np.array(img).astype(np.float32)
-        
-        # Resize for preview keeping aspect ratio
-        h, w = self.image_original.shape[:2]
-        if h > PREVIEW_MAX_HEIGHT:
-            scale = PREVIEW_MAX_HEIGHT / h
-            new_h = PREVIEW_MAX_HEIGHT
-            new_w = int(w * scale)
-            self.image = cv2.resize(self.image_original, (new_w, new_h), 
-                                   interpolation=cv2.INTER_AREA).astype(np.float32)
-            print(f"Resized for preview: {w}x{h} -> {new_w}x{new_h}")
-        else:
-            self.image = self.image_original.copy()
-        
+
+    def __init__(self, image_paths, start_index=0):
+        if not image_paths:
+            raise ValueError("No images provided for the interactive viewer.")
+
+        self.image_files = image_paths
+        self.total_images = len(image_paths)
+        self.current_index = max(0, min(start_index, self.total_images - 1))
+        self.clear_lookup = build_clear_lookup(CLEAR_DIR)
+
         # Current parameters
         self.psi_min = DEFAULT_PSI_MIN
         self.psi_max = DEFAULT_PSI_MAX
@@ -288,17 +591,35 @@ class InteractiveDehazingV6:
         self.defogging_strength = DEFAULT_STRENGTH
         self.strength_curve = DEFAULT_STRENGTH_CURVE
         self.psi_threshold = DEFAULT_PSI_THRESHOLD
-        
-        # Compute atmospheric light
+
+        # Placeholders that will be updated when loading each image
+        self.image_path = None
+        self.image_name = None
+        self.image_original = None
+        self.image = None
+        self.preview_scale = 1.0
+        self.clear_image_original = None
+        self.clear_preview = None
+        self.clear_path = None
+        self.quality_metrics = None
+
+        # Navigation button state
+        self.button_rects = {}  # Will store button rectangles for click detection
+
+        # Load the initial image and compute atmospheric light
+        self.load_image_at_index(self.current_index)
         self.update_atmospheric_light()
-        
+
         # Create window and trackbars
         self.window_name = "Interactive Dehazing V6 - Method 1 (Atmospheric Light Comparison)"
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.window_name, 1800, 1000)
-        
+
+        # Set mouse callback for button clicks
+        cv2.setMouseCallback(self.window_name, self.on_mouse_click)
+
         self.create_trackbars()
-        
+
         # Initial update
         self.needs_A_update = False
         self.update_display()
@@ -328,6 +649,129 @@ class InteractiveDehazingV6:
         
         cv2.createTrackbar('Window Size', self.window_name, 
                           self.window_size, WINDOW_SIZE_RANGE, self.on_window_size_change)
+
+    def _prepare_preview(self, image_array):
+        """Resize the image for preview if necessary."""
+        h, w = image_array.shape[:2]
+        if h > PREVIEW_MAX_HEIGHT:
+            scale = PREVIEW_MAX_HEIGHT / h
+            new_h = PREVIEW_MAX_HEIGHT
+            new_w = max(1, int(w * scale))
+            resized = cv2.resize(image_array, (new_w, new_h), interpolation=cv2.INTER_AREA).astype(np.float32)
+            print(f"Resized for preview: {w}x{h} -> {new_w}x{new_h}")
+            return resized, scale
+        return image_array.copy(), 1.0
+
+    def load_image_at_index(self, index):
+        """Load the hazy and clear images for the specified dataset index."""
+        if not self.image_files:
+            raise RuntimeError("Image file list is empty.")
+
+        self.current_index = index % self.total_images
+        image_path = self.image_files[self.current_index]
+        self.image_path = image_path
+        self.image_name = os.path.basename(image_path)
+
+        with Image.open(image_path) as img:
+            hazy = np.array(img.convert('RGB')).astype(np.float32)
+
+        self.image_original = hazy
+        self.image, self.preview_scale = self._prepare_preview(self.image_original)
+        self.load_clear_reference()
+        self.quality_metrics = None
+        print(f"Loaded [{self.current_index + 1}/{self.total_images}]: {self.image_name}")
+
+    def load_clear_reference(self):
+        """Load and resize the corresponding clear image if available."""
+        self.clear_preview = None
+        self.clear_image_original = None
+        self.clear_path = None
+
+        if not self.clear_lookup:
+            return
+
+        key = normalize_filename_key(self.image_name)
+        clear_path = self.clear_lookup.get(key)
+        if not clear_path or not os.path.exists(clear_path):
+            print(f"⚠️ Ground truth not found for: {self.image_name}")
+            return
+
+        self.clear_path = clear_path
+        with Image.open(clear_path) as img:
+            clear = np.array(img.convert('RGB')).astype(np.float32)
+
+        if clear.shape[:2] != self.image_original.shape[:2]:
+            clear = cv2.resize(
+                clear,
+                (self.image_original.shape[1], self.image_original.shape[0]),
+                interpolation=cv2.INTER_AREA
+            ).astype(np.float32)
+
+        self.clear_image_original = clear
+
+        preview_width = self.image.shape[1]
+        preview_height = self.image.shape[0]
+        if clear.shape[:2] != (preview_height, preview_width):
+            clear_preview = cv2.resize(clear, (preview_width, preview_height), interpolation=cv2.INTER_AREA)
+        else:
+            clear_preview = clear.copy()
+
+        self.clear_preview = clear_preview.astype(np.float32)
+
+    def show_next_image(self):
+        """Advance to the next image in the dataset."""
+        if self.total_images <= 1:
+            return
+        next_index = (self.current_index + 1) % self.total_images
+        self.load_image_at_index(next_index)
+        self.update_atmospheric_light()
+        self.needs_A_update = False
+        self.update_display()
+
+    def show_previous_image(self):
+        """Go back to the previous image in the dataset."""
+        if self.total_images <= 1:
+            return
+        prev_index = (self.current_index - 1) % self.total_images
+        self.load_image_at_index(prev_index)
+        self.update_atmospheric_light()
+        self.needs_A_update = False
+        self.update_display()
+
+    def on_mouse_click(self, event, x, y, flags, param):
+        """Handle mouse click events for navigation buttons"""
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+
+        # Check if click is within any button
+        if not hasattr(self, 'button_rects') or not self.button_rects:
+            return
+
+        # Adjust y coordinate to account for navigation bar position
+        # The nav bar is at the bottom, so we need to check relative to display height
+        if not hasattr(self, 'display_height'):
+            return
+
+        # Calculate y relative to navigation bar
+        nav_bar_y_offset = self.display_height - 70  # nav bar height is 70
+        relative_y = y - nav_bar_y_offset
+
+        if relative_y < 0 or relative_y > 70:
+            return
+
+        # Check each button
+        for button_name, (bx1, by1, bx2, by2) in self.button_rects.items():
+            if bx1 <= x <= bx2 and by1 <= relative_y <= by2:
+                print(f"Button clicked: {button_name}")
+                if button_name == 'prev':
+                    self.show_previous_image()
+                elif button_name == 'next':
+                    self.show_next_image()
+                elif button_name == 'save':
+                    self.save_result()
+                elif button_name == 'reset':
+                    self.reset_parameters()
+                break
     
     def on_trackbar_change(self, val):
         """Callback for trackbar change"""
@@ -413,94 +857,196 @@ class InteractiveDehazingV6:
         self.current_psi_map = psi_map
         self.current_transmission = transmission
         self.current_strength_map = strength_map
+        self.quality_metrics = self.compute_quality_metrics()
         
         # Create display
         self.create_display(psi_min_val, psi_max_val, psi_threshold_val, t0_val, strength_val, curve_val)
+
+    def compute_quality_metrics(self):
+        """Compute PSNR/SSIM/CIEDE2000 using the clear reference when available."""
+        if self.clear_preview is None or self.current_result is None:
+            return None
+
+        result = np.clip(self.current_result, 0, 255).astype(np.uint8)
+        clear = np.clip(self.clear_preview, 0, 255).astype(np.uint8)
+
+        height = min(result.shape[0], clear.shape[0])
+        width = min(result.shape[1], clear.shape[1])
+        if height == 0 or width == 0:
+            return None
+
+        result = result[:height, :width]
+        clear = clear[:height, :width]
+
+        try:
+            psnr_val = peak_signal_noise_ratio(clear, result, data_range=255)
+        except Exception as exc:
+            print(f"⚠️ PSNR calculation failed: {exc}")
+            psnr_val = None
+
+        try:
+            ssim_val = structural_similarity(clear, result, channel_axis=-1, data_range=255)
+        except Exception as exc:
+            print(f"⚠️ SSIM calculation failed: {exc}")
+            ssim_val = None
+
+        try:
+            clear_lab = rgb2lab(clear / 255.0)
+            result_lab = rgb2lab(result / 255.0)
+            delta_e = deltaE_ciede2000(clear_lab, result_lab)
+            ciede_val = float(np.mean(delta_e))
+        except Exception as exc:
+            print(f"⚠️ CIEDE2000 calculation failed: {exc}")
+            ciede_val = None
+
+        metrics = {
+            'psnr': float(psnr_val) if psnr_val is not None and np.isfinite(psnr_val) else None,
+            'ssim': float(ssim_val) if ssim_val is not None and np.isfinite(ssim_val) else None,
+            'ciede': ciede_val
+        }
+        return metrics
     
     def create_display(self, psi_min_val, psi_max_val, psi_threshold_val, t0_val, strength_val, curve_val):
-        """Create display layout"""
+        """Create modern display layout"""
         # Convert to uint8 for display
         img_display = cv2.cvtColor(self.image.astype(np.uint8), cv2.COLOR_RGB2BGR)
         result_display = cv2.cvtColor(self.current_result.astype(np.uint8), cv2.COLOR_RGB2BGR)
+        if self.clear_preview is not None:
+            clear_display = cv2.cvtColor(self.clear_preview.astype(np.uint8), cv2.COLOR_RGB2BGR)
+        else:
+            clear_display = None
+
+        # Create heatmaps with better colormaps
+        psi_heatmap = create_heatmap(self.current_psi_map, cv2.COLORMAP_TURBO)
+        strength_heatmap = create_heatmap(self.current_strength_map, cv2.COLORMAP_INFERNO)
+
+        # Add modern labels and borders (without emojis - use ASCII symbols)
+        img1 = add_label(add_border(img_display), "[HAZY]  Original Hazy Image", accent=True)
+        img2 = add_label(add_border(psi_heatmap), "[PSI]  PSI Map (Fog Density)", accent=False)
+        img3 = add_label(add_border(strength_heatmap), "[STRENGTH]  Adaptive Strength Map", accent=False)
+        img4 = add_label(add_border(result_display), "[RESULT]  Dehazed Result", accent=True)
+
+        if clear_display is not None:
+            img5 = add_label(add_border(clear_display), "[GT]  Ground Truth (Clear)", accent=True)
+            footer_lines = []
+            if self.quality_metrics:
+                psnr_text = (
+                    f"PSNR: {self.quality_metrics['psnr']:.2f} dB"
+                    if self.quality_metrics['psnr'] is not None
+                    else "PSNR: N/A"
+                )
+                ssim_text = (
+                    f"SSIM: {self.quality_metrics['ssim']:.4f}"
+                    if self.quality_metrics['ssim'] is not None
+                    else "SSIM: N/A"
+                )
+                ciede_text = (
+                    f"CIEDE2000: {self.quality_metrics['ciede']:.2f}"
+                    if self.quality_metrics['ciede'] is not None
+                    else "CIEDE2000: N/A"
+                )
+                footer_lines = [psnr_text, ssim_text, ciede_text]
+            else:
+                footer_lines = ["PSNR: --", "SSIM: --", "CIEDE2000: --"]
+            img5 = add_footer(img5, footer_lines)
+        else:
+            img5 = None
         
-        # Create heatmaps
-        psi_heatmap = create_heatmap(self.current_psi_map, cv2.COLORMAP_JET)
-        strength_heatmap = create_heatmap(self.current_strength_map, cv2.COLORMAP_HOT)
+        # Create 2x2 grid with spacing
+        spacing = 8
+        spacing_color = UI_COLORS['bg_dark']
+
+        # Horizontal spacer
+        h_spacer = np.full((img1.shape[0], spacing, 3), spacing_color, dtype=np.uint8)
+        # Vertical spacer
+        v_spacer = np.full((spacing, img1.shape[1] * 2 + spacing, 3), spacing_color, dtype=np.uint8)
+
+        top_row = np.hstack([img1, h_spacer, img2])
+        bottom_row = np.hstack([img3, h_spacer, img4])
+        image_grid = np.vstack([top_row, v_spacer, bottom_row])
+
+        if img5 is not None:
+            gt_panel = pad_panel_to_height(img5, image_grid.shape[0])
+            gt_spacer = np.full((image_grid.shape[0], spacing, 3), spacing_color, dtype=np.uint8)
+            image_grid = np.hstack([image_grid, gt_spacer, gt_panel])
         
-        # Add labels and borders
-        img1 = add_label(add_border(img_display), "Original Hazy Image")
-        img2 = add_label(add_border(psi_heatmap), f"PSI Map (Fog Density)")
-        img3 = add_label(add_border(strength_heatmap), "Adaptive Strength Map (STEEP)")
-        img4 = add_label(add_border(result_display), "Dehazed Result (Adaptive)")
-        
-        # Create 2x2 grid
-        top_row = np.hstack([img1, img2])
-        bottom_row = np.hstack([img3, img4])
-        image_grid = np.vstack([top_row, bottom_row])
-        
-        # Create statistics panel
+        # Create modern statistics panel (no emojis)
         stats = [
-            f"Image: {self.image_name}",
+            f"FILE: {self.image_name}",
+            f"IMAGE: {self.current_index + 1} of {self.total_images}",
             "",
-            "Steep Curve Parameters:",
+            "[ALGORITHM PARAMETERS]",
             f"  PSI Min: {psi_min_val:.2f}",
             f"  PSI Max: {psi_max_val:.2f}",
             f"  PSI Threshold: {psi_threshold_val:.2f}",
-            f"    (below this: suppressed)",
             f"  t0: {t0_val:.2f}",
             f"  Max Strength: {strength_val:.2f}",
             f"  Curve Steepness: {curve_val:.2f}",
-            f"    (higher = steeper)",
-            f"  Buffer: {self.buffer_size}",
-            f"  Window: {self.window_size}",
+            f"  Buffer Size: {self.buffer_size}",
+            f"  Window Size: {self.window_size}",
             "",
-            "Curve Effect:",
-            f"  PSI < {psi_threshold_val:.2f}:",
-            "     Linearly suppressed",
-            f"  PSI >= {psi_threshold_val:.2f}:",
-            f"     Power curve ^{curve_val:.1f}",
-            "",
-            "Strength Distribution:",
+            "[STRENGTH MAP STATS]",
             f"  Min: {np.min(self.current_strength_map):.3f}",
             f"  Avg: {np.mean(self.current_strength_map):.3f}",
             f"  Max: {np.max(self.current_strength_map):.3f}",
             "",
-            "PSI Statistics:",
+            "[PSI MAP STATS]",
             f"  Min: {np.min(self.current_psi_map):.3f}",
             f"  Avg: {np.mean(self.current_psi_map):.3f}",
             f"  Max: {np.max(self.current_psi_map):.3f}",
             "",
-            "Atmospheric Light:",
+            "[ATMOSPHERIC LIGHT]",
             f"  R: {self.A[0]:.1f}",
             f"  G: {self.A[1]:.1f}",
             f"  B: {self.A[2]:.1f}",
             "",
-            "Recommended for Heavy Fog:",
+            "[HEAVY FOG SETTINGS]",
             "  Max Strength: 2.5~3.0",
-            "  Curve: 4.0~8.0 (steep!)",
+            "  Curve: 4.0~8.0",
             "  PSI Threshold: 0.5~0.7",
             "  t0: 0.10~0.15",
             "",
-            "Curve Steepness Guide:",
-            "  1.0 - Linear (gentle)",
-            "  3.0 - Cubic (moderate)",
-            "  5.0 - Very steep",
-            "  8.0-10.0 - Near binary",
-            "",
-            "Keys: S=Save, R=Reset, Q=Quit",
+            "[KEYBOARD CONTROLS]",
+            "  Left/Right  Navigate images",
+            "  S           Save result",
+            "  R           Reset parameters",
+            "  Q           Quit application",
         ]
-        
-        stats_panel = create_stats_panel(stats, width=500)
-        
+
+        stats_panel = create_stats_panel(stats, width=520)
+
         # Resize stats panel to match image grid height
         stats_h = image_grid.shape[0]
         stats_w = stats_panel.shape[1]
-        stats_panel_resized = cv2.resize(stats_panel, (stats_w, stats_h), 
+        stats_panel_resized = cv2.resize(stats_panel, (stats_w, stats_h),
                                         interpolation=cv2.INTER_LINEAR)
-        
-        # Combine image grid and stats panel
-        display = np.hstack([image_grid, stats_panel_resized])
-        
+
+        # Combine image grid and stats panel with spacing
+        stats_spacer = np.full((image_grid.shape[0], spacing, 3), spacing_color, dtype=np.uint8)
+        display = np.hstack([image_grid, stats_spacer, stats_panel_resized])
+
+        # Create navigation bar
+        nav_bar, button_rects = create_navigation_bar(
+            display.shape[1],
+            self.current_index,
+            self.total_images
+        )
+
+        # Store button rectangles for click detection
+        self.button_rects = button_rects
+
+        # Add navigation bar to bottom
+        display = np.vstack([display, nav_bar])
+
+        # Add outer border for polish
+        border_thickness = 5
+        display = cv2.copyMakeBorder(display, border_thickness, border_thickness,
+                                     border_thickness, border_thickness,
+                                     cv2.BORDER_CONSTANT, value=UI_COLORS['bg_dark'])
+
+        # Store display height for mouse click detection
+        self.display_height = display.shape[0]
+
         cv2.imshow(self.window_name, display)
     
     def reset_parameters(self):
@@ -636,6 +1182,7 @@ class InteractiveDehazingV6:
         print("  - Adjust curve until strength map shows clear separation")
         print("\nControls:")
         print("  - Adjust trackbars to see real-time effects")
+        print("  - Press LEFT/RIGHT arrow to navigate dataset images")
         print("  - Press 'S' to save result")
         print("  - Press 'R' to reset to defaults")
         print("  - Press 'Q' or ESC to quit")
@@ -643,14 +1190,25 @@ class InteractiveDehazingV6:
         
         while True:
             key = cv2.waitKey(100) & 0xFF
-            
-            if key == ord('q') or key == 27:  # Q or ESC
+
+            if key == ord('q') or key == ord('Q') or key == 27:  # Q or ESC
                 break
-            elif key == ord('s'):  # Save
+            elif key == ord('s') or key == ord('S'):  # Save
                 self.save_result()
-            elif key == ord('r'):  # Reset
+            elif key == ord('r') or key == ord('R'):  # Reset
                 self.reset_parameters()
-        
+            # Arrow keys - handle different platforms
+            # macOS: 63234 (left), 63235 (right)
+            # Linux/Windows: 81 (left), 83 (right)
+            # Also support 2 and 3 for additional compatibility
+            elif key == 83 or key == 3 or key == 63235:  # Right arrow
+                self.show_next_image()
+            elif key == 81 or key == 2 or key == 63234:  # Left arrow
+                self.show_previous_image()
+            # Debug: print key code if not recognized
+            elif key != 255:
+                print(f"Key pressed: {key}")
+
         cv2.destroyAllWindows()
 
 
@@ -658,26 +1216,33 @@ def main():
     """Main function"""
     import sys
     
-    # Check if image path provided
+    dataset_images = list_image_files(INPUT_DIR)
+    image_files = list(dataset_images)
+    start_index = 0
+
+    requested_path = None
     if len(sys.argv) > 1:
-        image_path = sys.argv[1]
-    else:
-        # Use first image in dataset
-        image_files = sorted(glob(os.path.join(INPUT_DIR, "*.png")))
-        if not image_files:
-            print(f"❌ No PNG files found in {INPUT_DIR}")
-            print(f"Usage: python interactive_defog_v6_method1.py [image_path]")
+        requested_path = os.path.abspath(sys.argv[1])
+        if not os.path.exists(requested_path):
+            print(f"❌ Image not found: {requested_path}")
             return
-        image_path = image_files[0]
-        print(f"Using first image: {image_path}")
-    
-    # Check if image exists
-    if not os.path.exists(image_path):
-        print(f"❌ Image not found: {image_path}")
-        return
-    
+
+    if requested_path:
+        if requested_path in image_files:
+            start_index = image_files.index(requested_path)
+        else:
+            image_files = [requested_path]
+            start_index = 0
+            print("⚠️ Provided image is outside the default dataset. Navigation will be disabled.")
+    else:
+        if not image_files:
+            print(f"❌ No images found in {INPUT_DIR}")
+            print(f"Usage: python interactive.py [optional_image_path]")
+            return
+        print(f"Using first dataset image: {image_files[0]}")
+
     # Create and run app
-    app = InteractiveDehazingV6(image_path)
+    app = InteractiveDehazingV6(image_files, start_index=start_index)
     app.run()
 
 
