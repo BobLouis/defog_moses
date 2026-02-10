@@ -1,4 +1,4 @@
-# defog_2023.py
+# defog_proposed_psi_fog_esti_corr_clean.py
 
 import numpy as np
 from scipy.ndimage import minimum_filter

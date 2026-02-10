@@ -8,7 +8,8 @@ from glob import glob
 # 根據不同的版本、跑不同的dataset 調整!!!
 from defog_proposed import defog_img
 defog_version = "defog_proposed"
-dataset = "real"
+# dataset = "real"
+dataset = "OHaze_lite"
 
 def main():
     hazy_dir = f"./dataset/{dataset}/hazy"

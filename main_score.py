@@ -13,8 +13,8 @@ from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
 # from defog_proposed_atmo_section_claude import defog_img
-from defog_avsd_v5 import defog_img
-defog_version = "defog_avsd_v5"
+from defog_proposed import defog_img
+defog_version = "defog_proposed"
 dataset = "OHaze_lite"
 # dataset = "SOTS_in"
 
