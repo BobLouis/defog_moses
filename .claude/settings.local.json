@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(while [ ! -f \"/Users/hongweichen/Documents/實驗室/論文/defog/昱恩交接/img_soft/dataset/OHaze_lite/report/score_defog_v6_method3.csv\" ])",
+      "Bash(do sleep 10)",
+      "Bash(done)",
+      "Bash(do sleep 5)",
+      "Bash(conda run:*)",
+      "Bash(source:*)",
+      "Bash(conda activate:*)",
+      "Bash(echo:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,4 +1,4 @@
-# defog_v6_method4.py (方法四：自適應強度 + 絕對霧濃度校正)
+# defog_v6_method5.py (方法五：全域/空間 PSI 自適應混合)
 import numpy as np
 from scipy.ndimage import minimum_filter
 
@@ -6,13 +6,14 @@ from scipy.ndimage import minimum_filter
 H(x) = D(x)*t(x) + A*(1-t(x))
 D(x) = ((H(x) - A) / t(x)) + A
 =================================================================
-V6 Method 4:
+V6 Method 5:
 - 2x 下採樣估計大氣光 A
-- 對比度下降法估計全域霧濃度 → 動態調整除霧強度
-- 大氣光比較法生成空間 PSI map
-- 自適應強度機制: t_adjusted = t^adaptive_strength
-  - 霧濃區域 strength 高 → 除霧強
-  - 無霧區域 strength = 1 → 不處理
+- predict_psi 計算全域 PSI (如 moses 方法)
+- 大氣光比較法生成空間 PSI map (如 method1)
+- 根據霧均勻度混合全域/空間 PSI
+  - 均勻霧 (SOTS 合成) → 偏向全域 PSI
+  - 不均勻霧 (OHaze 真實) → 偏向空間 PSI
+- 動態 t0 根據霧濃度調整
 """
 
 
@@ -63,6 +64,13 @@ def estimate_fog_score(image):
     return fog_score
 
 
+def predict_psi(fog_score):
+    """根據 fog_score 計算全域最佳 PSI"""
+    best_psi = 0.011099 * fog_score + 0.746386
+    best_psi = np.clip(best_psi, 0.7, 1.2)
+    return best_psi
+
+
 def compute_psi_map(H, A, psi_min=0.52, psi_max=1.38, buffer_size=8, epsilon=1e-6):
     """方法一的空間 PSI map"""
     height, width = H.shape[:2]
@@ -104,7 +112,10 @@ def compute_psi_map(H, A, psi_min=0.52, psi_max=1.38, buffer_size=8, epsilon=1e-
 def defog_img(hazy_image, psi_min=0.52, psi_max=1.38, t0=0.20, window_size=8,
               buffer_size=8, epsilon=1e-6):
     """
-    方法四：自適應強度 + 絕對霧濃度校正
+    方法五：全域中心 + 空間偏移 PSI
+    - 用 predict_psi 決定全域最佳 PSI 中心
+    - 用空間 PSI map 的偏移量加入局部變化
+    - 保留空間適應性同時使用最佳全域校正
     """
     H = hazy_image.astype(np.float32)
     height, width, channels = H.shape
@@ -120,35 +131,43 @@ def defog_img(hazy_image, psi_min=0.52, psi_max=1.38, t0=0.20, window_size=8,
     fog_score = estimate_fog_score(hazy_image)
     fog_ratio = fog_score / 100.0
 
-    # ========== 根據霧濃度校正 PSI 範圍 ==========
-    psi_shift = (fog_ratio - 0.5) * 0.18
-    adj_psi_min = psi_min + psi_shift
-    adj_psi_max = psi_max + psi_shift
+    # ========== 全域 PSI (predict_psi 方法) ==========
+    global_psi = predict_psi(fog_score)
+
+    # ========== 空間 PSI Map (方法一) ==========
+    psi_map_spatial = compute_psi_map(H, A, psi_min, psi_max, buffer_size, epsilon)
+
+    # ========== 以全域 PSI 為中心 + 空間偏移 ==========
+    # 計算空間 PSI 相對於其均值的偏移
+    spatial_mean = np.mean(psi_map_spatial)
+    spatial_offset = psi_map_spatial - spatial_mean
+
+    # 空間偏移的強度：霧濃(OHaze) 需要更多空間變化, 均勻霧需要較少
+    psi_cv = np.std(psi_map_spatial) / (spatial_mean + epsilon)
+    # 空間權重：cv 高 → 保留更多空間變化
+    spatial_strength = np.clip(psi_cv * 4.0, 0.1, 0.6)
+
+    psi_map = global_psi + spatial_strength * spatial_offset
 
     # ========== 計算歸一化圖像 ==========
     H_norm = H / (A + epsilon)
     K = np.mean(H_norm, axis=2)
     min_norm = np.min(H_norm, axis=2)
 
-    # ========== 計算 PSI Map ==========
-    psi_map = compute_psi_map(H, A, adj_psi_min, adj_psi_max, buffer_size, epsilon)
-
     # ========== 計算傳輸圖 t ==========
     temp = 3 * K + 3 * min_norm
     t = (temp - psi_map * 3 * K * min_norm) / (temp + epsilon)
 
-    # 動態 t0: 濃霧允許更低 t, 淡霧 t0 較高
-    dynamic_t0 = t0 + (1 - fog_ratio) * 0.10
+    # 動態 t0
+    dynamic_t0 = t0 + (1 - fog_ratio) * 0.08
     t = np.clip(t, dynamic_t0, 1)
-
-    adaptive_strength = np.ones_like(t)  # placeholder for return
 
     # ========== 恢復無霧圖像 ==========
     t_expanded = t[:, :, np.newaxis]
     D = (H - A) / t_expanded + A
     D = np.clip(D, 0, 255).astype(np.uint8)
 
-    return D, A, psi_map, fog_score, adj_psi_min, adj_psi_max, adaptive_strength
+    return D, A, psi_map, fog_score, global_psi, spatial_strength
 
 
 if __name__ == "__main__":
@@ -161,10 +180,15 @@ if __name__ == "__main__":
     from skimage.color import rgb2lab, deltaE_ciede2000
     import pandas as pd
     from tqdm import tqdm
-    import matplotlib.pyplot as plt
 
-    defog_version = "defog_v6_method4"
-    dataset = "SOTS_in"
+    defog_version = "defog_v6_method5"
+    datasets = ["OHaze_lite", "SOTS_out", "SOTS_in"]
+
+    targets = {
+        "OHaze_lite": {"PSNR": 16.7290, "SSIM": 0.5942, "CIEDE2000": 15.3479},
+        "SOTS_out":   {"PSNR": 22.1355, "SSIM": 0.8840, "CIEDE2000": 6.0956},
+        "SOTS_in":    {"PSNR": 17.1906, "SSIM": 0.7856, "CIEDE2000": 10.4843},
+    }
 
     def compute_psnr(defogged_image, clear_image_path, Xsize, Ysize):
         clear_img = Image.open(clear_image_path).convert('RGB')
@@ -217,23 +241,9 @@ if __name__ == "__main__":
             print(f"Error calculating CIEDE 2000: {e}")
             return 0
 
-    def save_psi_heatmap(psi_map, output_path, psi_min=0.52, psi_max=1.38):
-        psi_normalized = (psi_map - psi_min) / (psi_max - psi_min + 1e-6)
-        psi_normalized = np.clip(psi_normalized, 0, 1)
-        plt.figure(figsize=(10, 8))
-        plt.imshow(psi_normalized, cmap='jet', vmin=0, vmax=1)
-        plt.colorbar(label=f'PSI\n{psi_min:.2f} (clear) -> {psi_max:.2f} (foggy)')
-        plt.title('PSI Map - Method 4')
-        plt.axis('off')
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        plt.close()
-
-    def main():
+    def main(dataset):
         hazy_dir = f"./dataset/{dataset}/hazy"
         output_defog_dir = f"./dataset/{dataset}/result_{defog_version}"
-        heatmap_dir = "./tmpfile/method4"
-        os.makedirs(heatmap_dir, exist_ok=True)
         os.makedirs(output_defog_dir, exist_ok=True)
 
         hazy_files = sorted(glob(os.path.join(hazy_dir, "*.png")))
@@ -243,33 +253,22 @@ if __name__ == "__main__":
             base_name = full_name.split('_')[0]
             output_defog_path = os.path.join(output_defog_dir, f"{base_name}_{defog_version}.png")
 
-            print(f"\n處理中: {hazy_path}")
-
             try:
                 img = Image.open(hazy_path).convert('RGB')
                 H = np.array(img)
 
                 start_time = time.time()
-                defog_output, A, psi_map, fog_score, psi_min, psi_max, strength_map = defog_img(H, buffer_size=16)
+                defog_output, A, psi_map, fog_score, global_psi, alpha = defog_img(H, buffer_size=16)
                 elapsed = time.time() - start_time
 
                 Image.fromarray(defog_output).save(output_defog_path)
 
-                heatmap_path = os.path.join(heatmap_dir, f"{base_name}_psi_heatmap.png")
-                save_psi_heatmap(psi_map, heatmap_path, psi_min, psi_max)
-
-                avg_psi = np.mean(psi_map)
-                print(f"A: {A}, FogScore: {fog_score:.2f}")
-                print(f"PSI: [{psi_min:.4f}, {psi_max:.4f}], Avg: {avg_psi:.4f}")
-                print(f"Strength: [{np.min(strength_map):.3f}, {np.max(strength_map):.3f}], Avg: {np.mean(strength_map):.3f}")
-                print(f"Time: {elapsed:.3f}s")
-
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error processing {hazy_path}: {e}")
                 import traceback
                 traceback.print_exc()
 
-    def score():
+    def score(dataset):
         clear_dir = f"./dataset/{dataset}/clear"
         defog_dir = f"./dataset/{dataset}/result_{defog_version}"
         defog_files = sorted(glob(os.path.join(defog_dir, "*.png")))
@@ -278,7 +277,7 @@ if __name__ == "__main__":
         avg_scores = {"PSNR": 0, "SSIM": 0, "CIEDE2000": 0}
         total = 0
 
-        for defog_path in tqdm(defog_files, desc="Scoring"):
+        for defog_path in tqdm(defog_files, desc=f"Scoring {dataset}"):
             base_name = os.path.splitext(os.path.basename(defog_path))[0].split('_')[0]
             clear_path = os.path.join(clear_dir, f"{base_name}_clear.png")
             if not os.path.exists(clear_path):
@@ -305,14 +304,31 @@ if __name__ == "__main__":
             csv_path = f"./dataset/{dataset}/report/score_{defog_version}.csv"
             df.to_csv(csv_path, index=False, float_format="%.4f")
 
-            print(f"\n{'='*60}")
-            print(f"Method 4 (Adaptive Strength + Absolute Fog):")
-            print(f"  PSNR:      {avg_scores['PSNR']:.4f} dB")
-            print(f"  SSIM:      {avg_scores['SSIM']:.4f}")
-            print(f"  CIEDE2000: {avg_scores['CIEDE2000']:.4f}")
-            print(f"{'='*60}")
-            print(f"Baseline (Method 1): PSNR=16.6887, SSIM=0.5925, CIEDE=15.3923")
-            print(f"Saved to: {csv_path}")
+        return avg_scores if total > 0 else None
 
-    main()
-    score()
+    # ========== Run all datasets ==========
+    all_scores = {}
+    for dataset in datasets:
+        print(f"\n{'#'*60}")
+        print(f"### Processing: {dataset}")
+        print(f"{'#'*60}")
+        main(dataset)
+        avg = score(dataset)
+        if avg:
+            all_scores[dataset] = avg
+
+    # ========== Summary ==========
+    print(f"\n\n{'='*70}")
+    print(f"Method 5 Summary vs Targets")
+    print(f"{'='*70}")
+    print(f"{'Dataset':<15} | {'PSNR':>8} ({'Tgt':>8}) | {'SSIM':>8} ({'Tgt':>8}) | {'CIEDE':>8} ({'Tgt':>8})")
+    print(f"{'-'*15}-+-{'-'*19}-+-{'-'*19}-+-{'-'*19}")
+    for ds in datasets:
+        if ds in all_scores:
+            s = all_scores[ds]
+            t = targets[ds]
+            p_ok = "+" if s["PSNR"] > t["PSNR"] else "-"
+            s_ok = "+" if s["SSIM"] > t["SSIM"] else "-"
+            c_ok = "+" if s["CIEDE2000"] < t["CIEDE2000"] else "-"
+            print(f"{ds:<15} | {s['PSNR']:>7.4f}{p_ok} ({t['PSNR']:>7.4f}) | {s['SSIM']:>7.4f}{s_ok} ({t['SSIM']:>7.4f}) | {s['CIEDE2000']:>7.4f}{c_ok} ({t['CIEDE2000']:>7.4f})")
+    print(f"{'='*70}")
