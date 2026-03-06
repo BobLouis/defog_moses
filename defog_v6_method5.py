@@ -182,10 +182,10 @@ if __name__ == "__main__":
     from tqdm import tqdm
 
     defog_version = "defog_v6_method5"
-    datasets = ["OHaze_lite", "SOTS_out", "SOTS_in"]
+    datasets = ["OHaze", "SOTS_out", "SOTS_in"]
 
     targets = {
-        "OHaze_lite": {"PSNR": 16.7290, "SSIM": 0.5942, "CIEDE2000": 15.3479},
+        "OHaze": {"PSNR": 16.7290, "SSIM": 0.5942, "CIEDE2000": 15.3479},
         "SOTS_out":   {"PSNR": 22.1355, "SSIM": 0.8840, "CIEDE2000": 6.0956},
         "SOTS_in":    {"PSNR": 17.1906, "SSIM": 0.7856, "CIEDE2000": 10.4843},
     }

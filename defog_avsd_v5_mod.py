@@ -1,208 +1,138 @@
-# defog_v6_method3.py (使用方法三：混合法 - 向量化版本)
+# defog_v5_template.py (基於 proposed_v5 邏輯的模板格式)
 import numpy as np
-from scipy.ndimage import minimum_filter, uniform_filter1d, uniform_filter
+from scipy.ndimage import minimum_filter
 
 """ 公式整理
 H(x) = D(x)*t(x) + A*(1-t(x))
 D(x) = ((H(x) - A) / t(x)) + A
 =================================================================
-A 從暗通道中選擇最亮的像素作為 A = (Ar, Ag, Ab) (patch = 8x8, 2x降採樣)
-t(x) = (temp - psi * 3 * K * min_norm) / temp
-where temp = 3*K + 3*min_norm
+A 從暗通道中選擇最亮的像素作為 A = (Ar, Ag, Ab) (patch = 8x8, 無降採樣)
+t(x) = 1 - w * (K_H(x) / A) * (1 - S_H(x)/S_D(x))
 =================================================================
-V6 Method 3: 混合法 (Hybrid Method) - Vectorized
-- 結合大氣光比較 + 局部對比度 (全向量化)
-- 根據場景特性選擇策略
-- 高亮度 + 低對比度 -> 霧區 -> PSI 高
-- 低亮度 + 高對比度 -> 前景 -> PSI 低
-- 其他 -> 加權混合
-- 加入全域霧濃度估計做中心校正
+which
+S(x) 為飽和度, K(x) 為像素強度值
+w = psi (動態計算，範圍 0.5~1.2)
+K_H(x) = Hr(x) + Hg(x) + Hb(x) / 3
+    => (K_H(x) / A) = (Hr(x)/Ar + Hg(x)/Ag + Hb(x)/Ab) / 3
+    => let H_norm[] = [Hr(x)/Ar, Hg(x)/Ag, Hb(x)/Ab]
+    => (K_H(x) / A) = avg(H_norm)
+S_D(x) = S_H(x) * (2 - S_H(x))
+S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
+=================================================================
+    => t(x) = 1 - w * (K_H(x) / A) * (1 - 1/(2 - S_H(x)) )
+簡化後：
+    t(x) = (temp - psi * 3 * K * min_norm) / temp
+    where temp = 3*K + 3*min_norm
 """
 
 
-def estimate_fog_score(image):
-    """對比度下降法估計霧濃度 (0~100)"""
-    if image.dtype == np.float32:
-        img = np.clip(image, 0, 255).astype(np.uint8)
-    else:
-        img = image
-
-    gray = img[:, :, 0]
+def predict_psi(image):
+    """
+    基於硬體霧氣評分預測最佳 PSI 值（V5 版本：無降採樣）
+    回歸公式：BestPsi = 0.009308 × HW_FogScore + 0.927009
+    限制範圍：0.5 ~ 1.2
+    
+    參數:
+    image: 輸入圖像（RGB，np.uint8 或 float32）
+    
+    返回:
+    BestPsi: 最佳 PSI 值（float）
+    """
+    # V5 硬體：直接用 full resolution 取 R channel（不降採樣）
+    gray = image[:, :, 0]
     height, width = gray.shape
-    total_pixels = height * width
-
-    max_val = np.max(gray)
-    min_val = np.min(gray)
-    avg_intensity = np.mean(gray)
+    
+    # 單次掃描找最大最小值
+    max_val = 0
+    min_val = 255
+    
+    for i in range(height):
+        for j in range(width):
+            pixel = int(gray[i, j])
+            if pixel > max_val:
+                max_val = pixel
+            if pixel < min_val:
+                min_val = pixel
+    
+    # 計算動態範圍
     dynamic_range = max_val - min_val
-    avg_deviation = np.mean(np.abs(gray.astype(np.float32) - avg_intensity))
-
-    diff_h = np.abs(gray[:, :-1].astype(np.int16) - gray[:, 1:].astype(np.int16))
-    diff_v = np.abs(gray[:-1, :].astype(np.int16) - gray[1:, :].astype(np.int16))
-    avg_local_diff = (np.sum(diff_h) + np.sum(diff_v)) / (2 * total_pixels)
-
+    
+    # 霧氣評分（用位移代替除法）
     if dynamic_range >= 240:
-        fog_score_range = 0
+        fog_score = 0
     elif dynamic_range <= 100:
-        fog_score_range = 100
+        fog_score = 100
     else:
-        fog_score_range = 100 - ((dynamic_range - 100) / 140.0) * 100
-
-    if avg_deviation >= 60:
-        fog_score_deviation = 0
-    elif avg_deviation <= 20:
-        fog_score_deviation = 100
-    else:
-        fog_score_deviation = 100 - ((avg_deviation - 20) / 40.0) * 100
-
-    if avg_local_diff >= 10:
-        fog_score_edge = 0
-    elif avg_local_diff <= 1:
-        fog_score_edge = 100
-    else:
-        fog_score_edge = 100 - ((avg_local_diff - 1) / 9.0) * 100
-
-    fog_score = (fog_score_range * 2 + fog_score_deviation + fog_score_edge) / 4
-    fog_score = np.clip(fog_score, 0, 100)
-    return fog_score
+        fog_score = (240 - dynamic_range) >> 1
+    
+    # 限制範圍
+    fog_score = max(0, min(100, fog_score))
+    
+    # 套用回歸公式
+    BestPsi = 0.009308 * fog_score + 0.927009
+    
+    # 限制範圍 0.5 ~ 1.2
+    BestPsi = max(0.5, min(1.2, BestPsi))
+    
+    return BestPsi
 
 
-def predict_psi(fog_score):
-    """根據 fog_score 計算全域最佳 PSI"""
-    best_psi = 0.0088 * fog_score + 0.78
-    best_psi = np.clip(best_psi, 0.74, 1.10)
-    return best_psi
-
-
-def compute_psi_map_method3(H, A, psi_min=0.52, psi_max=1.25, buffer_size=16, epsilon=1e-6,
-                            alpha=0.55, contrast_threshold=55, brightness_threshold=190):
+def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6):
     """
-    方法三：混合法 (Hybrid Method) - 全向量化版本
-
-    策略：
-    - 大氣光比較法 -> fog_score_atm
-    - 局部對比度 (uniform_filter) -> fog_score_contrast
-    - 條件混合: 高亮低對比=霧, 低亮高對比=前景, 其他=加權
+    基於 proposed_v5 方法對輸入的 hazy 圖像進行去霧處理，返回無霧圖像、大氣光和最佳 PSI。
+    
+    參數:
+    hazy_image: 輸入圖像（RGB，np.uint8）
+    psi: 擬合係數（會被自動計算的 BestPsi 覆蓋）
+    t0: 傳輸圖的下界（預設 0.2）
+    window_size: 最小濾波器窗口大小（8x8，V5 版本）
+    epsilon: 防止除零的小常數
+    
+    返回:
+    D: 去霧後的圖像（np.uint8）
+    A: 大氣光向量（3,）
+    BestPsi: 自動計算的最佳 PSI 值
     """
-    height, width = H.shape[:2]
-    psi_range = psi_max - psi_min
-
-    # 大氣光霧分數 (向量化)
-    diff = np.abs(H - A)
-    relative_diff = diff / (A + epsilon)
-    fog_density_atm = np.mean(relative_diff, axis=2) * 100
-    fog_density_atm = np.clip(fog_density_atm, 0, 100)
-    fog_score_atm = 100 - fog_density_atm  # 高分 = 霧濃
-
-    # 平滑大氣光霧分數 (替代 line buffer)
-    fog_score_atm_smooth = uniform_filter1d(fog_score_atm, size=buffer_size, axis=1, mode='nearest')
-
-    # 灰階與局部對比度 (向量化)
-    gray = H[:, :, 0]
-    # 局部最大值 - 局部最小值 = dynamic range
-    from scipy.ndimage import maximum_filter
-    local_max = maximum_filter(gray, size=(1, buffer_size))
-    local_min = minimum_filter(gray, size=(1, buffer_size))
-    dynamic_range = local_max - local_min
-
-    # 對比度霧分數 (向量化)
-    fog_score_contrast = np.where(
-        dynamic_range >= 200, 0,
-        np.where(dynamic_range <= 20, 100,
-                 (200 - dynamic_range) / 1.8)
-    )
-    fog_score_contrast = np.clip(fog_score_contrast, 0, 100)
-
-    # 像素亮度
-    pixel_brightness = np.mean(H, axis=2)
-
-    # 條件混合 (向量化)
-    # 條件1: 高亮 + 低對比 = 霧濃
-    cond_fog = (pixel_brightness > brightness_threshold) & (dynamic_range < contrast_threshold)
-    # 條件2: 低亮 + 高對比 = 前景
-    cond_clear = (pixel_brightness < brightness_threshold * 0.6) & (dynamic_range > contrast_threshold)
-
-    fog_score_final = np.where(
-        cond_fog,
-        np.maximum(fog_score_atm_smooth, fog_score_contrast) * 1.1,
-        np.where(
-            cond_clear,
-            np.minimum(fog_score_atm_smooth, fog_score_contrast) * 0.8,
-            alpha * fog_score_atm_smooth + (1 - alpha) * fog_score_contrast
-        )
-    )
-    fog_score_final = np.clip(fog_score_final, 0, 100)
-
-    # 映射到 PSI
-    psi_map = psi_min + (fog_score_final / 100.0) * psi_range
-    psi_map = np.clip(psi_map, psi_min, psi_max).astype(np.float32)
-
-    return psi_map
-
-
-def defog_img(hazy_image, psi_min=0.52, psi_max=1.25, t0=0.22, window_size=8, buffer_size=16, epsilon=1e-6):
-    """
-    方法三：混合法 + 全域校正
-    - 2x 下採樣估計大氣光 A
-    - 空間 PSI map (混合法)
-    - 全域 PSI 中心校正
-    - 動態 t0
-    """
+    # 將輸入轉換為 float 型態以便計算
     H = hazy_image.astype(np.float32)
-    height, width, channels = H.shape
-
-    # ========== 計算大氣光 A (2x 下採樣) ==========
-    H_ds = H[::2, ::2, :]
-    dark_channel_ds = minimum_filter(np.min(H_ds, axis=2), size=window_size)
-    idx = np.argmax(dark_channel_ds)
-    y, x = np.unravel_index(idx, dark_channel_ds.shape)
-    A = H_ds[y, x, :].copy()
-
-    # ========== 全域霧濃度 ==========
-    fog_score = estimate_fog_score(hazy_image)
-    fog_ratio = fog_score / 100.0
-    global_psi = predict_psi(fog_score)
-
-    # ========== 計算空間 PSI Map (混合法) ==========
-    psi_map_spatial = compute_psi_map_method3(H, A, psi_min, psi_max, buffer_size, epsilon)
-
-    # ========== 全域中心校正 ==========
-    spatial_mean = np.mean(psi_map_spatial)
-    spatial_offset = psi_map_spatial - spatial_mean
-
-    # 空間變異係數決定空間權重
-    psi_cv = np.std(psi_map_spatial) / (spatial_mean + epsilon)
-    spatial_strength = np.clip(psi_cv * 4.5, 0.12, 0.55)
-
-    # 根據空間均勻度調整全域 PSI
-    # 高 cv (非均勻霧/OHaze) → 降低 PSI 避免過度去霧
-    # 低 cv (均勻霧/SOTS) → 提高 PSI 加強去霧
-    cv_factor = 1.0 + (0.04 - psi_cv) * 3.0
-    cv_factor = np.clip(cv_factor, 0.92, 1.08)
-    adjusted_psi = global_psi * cv_factor
-
-    psi_map = adjusted_psi + spatial_strength * spatial_offset
-    psi_map = np.clip(psi_map, psi_min, psi_max)
-
-    # ========== 計算歸一化圖像 ==========
+    
+    # ========== 使用動態 PSI（V5 版本：無降採樣）==========
+    BestPsi = predict_psi(H)
+    psi = BestPsi
+    
+    # ========== 計算大氣光 A（V5 版本：直接對 full resolution 做處理）==========
+    # 直接對 full resolution 計算暗通道
+    dark_channel = np.min(H, axis=2)  # 取 RGB 最小值
+    dark_min = minimum_filter(dark_channel, size=window_size)  # 8x8 window min
+    
+    # 找出最大的 dark channel 值對應的位置
+    idx = np.argmax(dark_min)
+    y, x = np.unravel_index(idx, dark_min.shape)
+    A = H[y, x, :].copy()  # 大氣光向量
+    
+    # ========== 使用原始全解析度圖像進行去霧處理 ==========
+    # 對每個通道進行歸一化（除以 A）
     H_norm = H / (A + epsilon)
+    
+    # 計算歸一化圖像的平均強度 K（每個像素的均值）
     K = np.mean(H_norm, axis=2)
+    
+    # 計算最小歸一化值
     min_norm = np.min(H_norm, axis=2)
-
-    # ========== 計算傳輸圖 t ==========
+    
+    # 計算傳輸圖 t
     temp = 3 * K + 3 * min_norm
-    t = (temp - psi_map * 3 * K * min_norm) / (temp + epsilon)
-
-    # 動態 t0: 高霧(真實)提高下界避免過度去霧, 低霧降低下界多去霧
-    dynamic_t0 = t0 + fog_ratio * 0.10
-    t = np.clip(t, dynamic_t0, 1)
-
-    # ========== 恢復無霧圖像 ==========
+    t = (temp - psi * 3 * K * min_norm) / (temp + epsilon)
+    
+    # 限制傳輸圖的下界
+    t = np.clip(t, t0, 1)
+    
+    # 利用傳輸圖恢復無霧圖像： D(x) = (H(x) - A) / t(x) + A
     t_expanded = t[:, :, np.newaxis]
     D = (H - A) / t_expanded + A
     D = np.clip(D, 0, 255).astype(np.uint8)
 
-    return D, A, psi_map
+    return D, A, BestPsi
 
 
 if __name__ == "__main__":
@@ -216,7 +146,7 @@ if __name__ == "__main__":
     import pandas as pd
     from tqdm import tqdm
 
-    defog_version = "defog_v6_method3"
+    defog_version = "defog_avsd_v5_mod"
     datasets = ["OHaze", "SOTS_out", "SOTS_in"]
 
     targets = {
@@ -283,7 +213,7 @@ if __name__ == "__main__":
 
         hazy_files = sorted(glob(os.path.join(hazy_dir, "*.png")))
 
-        for hazy_path in tqdm(hazy_files, desc=f"Defogging {dataset}"):
+        for hazy_path in hazy_files:
             full_name = os.path.splitext(os.path.basename(hazy_path))[0]
             base_name = full_name.split('_')[0]
             output_defog_path = os.path.join(output_defog_dir, f"{base_name}_{defog_version}.png")
@@ -292,7 +222,10 @@ if __name__ == "__main__":
                 img = Image.open(hazy_path).convert('RGB')
                 H = np.array(img)
 
-                defog_output, A, psi_map = defog_img(H)
+                start_time = time.time()
+                defog_output, A, BestPsi = defog_img(H)
+                elapsed = time.time() - start_time
+
                 Image.fromarray(defog_output).save(output_defog_path)
 
             except Exception as e:
@@ -351,7 +284,7 @@ if __name__ == "__main__":
 
     # ========== Summary ==========
     print(f"\n\n{'='*70}")
-    print(f"Method 3 Summary vs Targets")
+    print(f"AVSD V5 Mod Summary vs Targets")
     print(f"{'='*70}")
     print(f"{'Dataset':<15} | {'PSNR':>8} ({'Tgt':>8}) | {'SSIM':>8} ({'Tgt':>8}) | {'CIEDE':>8} ({'Tgt':>8})")
     print(f"{'-'*15}-+-{'-'*19}-+-{'-'*19}-+-{'-'*19}")
