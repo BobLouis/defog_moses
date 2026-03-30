@@ -9,7 +9,7 @@ from glob import glob
 from defog_proposed import defog_img
 defog_version = "defog_proposed"
 # dataset = "real"
-dataset = "OHaze_lite"
+dataset = "OHaze"
 
 def main():
     hazy_dir = f"./dataset/{dataset}/hazy"

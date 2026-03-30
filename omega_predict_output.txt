@@ -1,0 +1,59 @@
+=== Step 1: Find optimal omega per image ===
+  01_hazy.png: optimal omega=0.49 PSNR=15.84  dc=0.358 sat=0.214 bright=0.472
+  02_hazy.png: optimal omega=0.61 PSNR=17.50  dc=0.378 sat=0.242 bright=0.453
+  03_hazy.png: optimal omega=0.68 PSNR=23.96  dc=0.369 sat=0.334 bright=0.457
+  04_hazy.png: optimal omega=0.20 PSNR=21.00  dc=0.374 sat=0.218 bright=0.340
+  05_hazy.png: optimal omega=0.85 PSNR=21.08  dc=0.575 sat=0.163 bright=0.534
+  06_hazy.png: optimal omega=0.93 PSNR=21.13  dc=0.430 sat=0.222 bright=0.455
+  07_hazy.png: optimal omega=0.66 PSNR=25.70  dc=0.307 sat=0.235 bright=0.355
+  08_hazy.png: optimal omega=0.90 PSNR=17.26  dc=0.508 sat=0.163 bright=0.555
+  09_hazy.png: optimal omega=0.83 PSNR=17.76  dc=0.631 sat=0.134 bright=0.548
+  10_hazy.png: optimal omega=0.77 PSNR=17.62  dc=0.431 sat=0.237 bright=0.549
+  11_hazy.png: optimal omega=0.65 PSNR=15.53  dc=0.328 sat=0.357 bright=0.500
+  12_hazy.png: optimal omega=0.68 PSNR=18.38  dc=0.445 sat=0.181 bright=0.545
+  13_hazy.png: optimal omega=0.80 PSNR=21.43  dc=0.387 sat=0.360 bright=0.518
+  14_hazy.png: optimal omega=0.69 PSNR=19.82  dc=0.628 sat=0.154 bright=0.636
+  15_hazy.png: optimal omega=0.84 PSNR=18.10  dc=0.584 sat=0.189 bright=0.594
+  16_hazy.png: optimal omega=0.85 PSNR=16.17  dc=0.579 sat=0.202 bright=0.587
+  17_hazy.png: optimal omega=0.85 PSNR=14.87  dc=0.582 sat=0.167 bright=0.612
+  18_hazy.png: optimal omega=0.84 PSNR=23.99  dc=0.271 sat=0.256 bright=0.350
+  19_hazy.png: optimal omega=0.81 PSNR=19.84  dc=0.517 sat=0.114 bright=0.612
+  20_hazy.png: optimal omega=0.89 PSNR=18.43  dc=0.553 sat=0.115 bright=0.621
+  21_hazy.png: optimal omega=0.85 PSNR=19.71  dc=0.593 sat=0.125 bright=0.552
+  22_hazy.png: optimal omega=0.50 PSNR=25.19  dc=0.324 sat=0.188 bright=0.397
+  23_hazy.png: optimal omega=0.70 PSNR=24.28  dc=0.333 sat=0.120 bright=0.432
+  24_hazy.png: optimal omega=0.75 PSNR=19.94  dc=0.365 sat=0.209 bright=0.399
+  25_hazy.png: optimal omega=0.84 PSNR=19.22  dc=0.521 sat=0.247 bright=0.516
+  26_hazy.png: optimal omega=0.80 PSNR=15.57  dc=0.718 sat=0.075 bright=0.600
+  27_hazy.png: optimal omega=0.66 PSNR=18.14  dc=0.552 sat=0.080 bright=0.555
+  28_hazy.png: optimal omega=0.94 PSNR=17.20  dc=0.670 sat=0.141 bright=0.644
+  29_hazy.png: optimal omega=0.83 PSNR=17.05  dc=0.672 sat=0.137 bright=0.638
+  30_hazy.png: optimal omega=0.56 PSNR=20.55  dc=0.512 sat=0.146 bright=0.526
+  31_hazy.png: optimal omega=0.69 PSNR=21.62  dc=0.513 sat=0.141 bright=0.549
+  32_hazy.png: optimal omega=0.52 PSNR=21.46  dc=0.490 sat=0.162 bright=0.539
+  33_hazy.png: optimal omega=0.64 PSNR=19.23  dc=0.547 sat=0.091 bright=0.486
+  34_hazy.png: optimal omega=0.69 PSNR=19.72  dc=0.347 sat=0.152 bright=0.434
+  35_hazy.png: optimal omega=0.82 PSNR=24.73  dc=0.507 sat=0.092 bright=0.561
+  36_hazy.png: optimal omega=0.70 PSNR=21.37  dc=0.401 sat=0.242 bright=0.457
+  37_hazy.png: optimal omega=0.77 PSNR=19.18  dc=0.420 sat=0.212 bright=0.472
+  38_hazy.png: optimal omega=0.74 PSNR=19.40  dc=0.349 sat=0.289 bright=0.489
+  39_hazy.png: optimal omega=0.68 PSNR=17.65  dc=0.418 sat=0.322 bright=0.563
+  40_hazy.png: optimal omega=0.68 PSNR=19.04  dc=0.582 sat=0.152 bright=0.578
+  41_hazy.png: optimal omega=0.55 PSNR=23.00  dc=0.537 sat=0.152 bright=0.584
+  42_hazy.png: optimal omega=0.85 PSNR=20.56  dc=0.435 sat=0.111 bright=0.487
+  43_hazy.png: optimal omega=0.55 PSNR=21.11  dc=0.446 sat=0.128 bright=0.492
+  44_hazy.png: optimal omega=0.56 PSNR=20.18  dc=0.493 sat=0.154 bright=0.551
+  45_hazy.png: optimal omega=0.80 PSNR=19.30  dc=0.531 sat=0.253 bright=0.498
+
+=== Step 2: Fit regression models ===
+  A (dc+sat+br): MAE=0.1015 R²=0.2029 PSNR=18.7739
+  B (5feat): MAE=0.1000 R²=0.2492 PSNR=18.8423
+  C (all9): MAE=0.0866 R²=0.3663 PSNR=18.9919
+  D (quad3): MAE=0.0960 R²=0.3503 PSNR=18.8093
+  E (fog_v5): MAE=0.1058 R²=0.0399 PSNR=18.6637
+
+Best model: C (all9) PSNR=18.9919
+
+=== Step 3: Optimize best model coefficients for PSNR ===
+Initial coeffs (OLS): [0.33540403 0.3426635  0.51192084 0.23295007]
+Initial PSNR: 18.7739

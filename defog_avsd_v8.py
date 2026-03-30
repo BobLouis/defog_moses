@@ -26,13 +26,9 @@ S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
 """
 
 #======================================================================
-# AVSD V5 Mod Summary vs Targets
-#======================================================================
-# Dataset         |     PSNR (     Tgt) |     SSIM (     Tgt) |    CIEDE (     Tgt)
-# ----------------+---------------------+---------------------+--------------------
-# OHaze           | 16.6058- (16.7290) |  0.6072+ ( 0.5942) | 15.8305- (15.3479)
-# SOTS_out        | 22.3576+ (22.1355) |  0.8873+ ( 0.8840) |  5.8381+ ( 6.0956)
-# SOTS_in         | 18.8638+ (18.8006) |  0.8028+ ( 0.7856) |  8.2583+ (10.4843)
+# AVSD V8: Per-channel psi weights (3-type) for better color restoration
+# Based on V5 Mod + dehaze_v7_3type channel scaling concept
+# Blue channel gets more defogging to suppress blue haze cast
 #======================================================================
 
 
@@ -89,79 +85,81 @@ def predict_psi(image):
 
 def defog_img(hazy_image, psi=1, t0=0.2, window_size=8, epsilon=1e-6,
               intensity_boost=0.35, intensity_threshold=0.45, intensity_divisor=0.35,
-              a_gate_threshold=0.98, a_gate_divisor=0.02, psi_cap=1.35):
+              a_gate_threshold=0.98, a_gate_divisor=0.02, psi_cap=1.35,
+              blue_extra_max=0.40, blue_sensitivity=20.0,
+              blue_R_ratio=0.4, blue_G_ratio=0.1,
+              blue_bias_threshold=0.01,
+              base_scale_r=0.99, base_scale_g=1.00, base_scale_b=1.005,
+              wb_sensitivity=5.0, wb_max_strength=0.5,
+              gamma=0.95, gamma_psi_threshold=1.10, gamma_blue_threshold=0.02,
+              ):
     """
-    基於 proposed_v5 方法對輸入的 hazy 圖像進行去霧處理，返回無霧圖像、大氣光和最佳 PSI。
-
-    參數:
-    hazy_image: 輸入圖像（RGB，np.uint8）
-    psi: 擬合係數（會被自動計算的 BestPsi 覆蓋）
-    t0: 傳輸圖的下界（預設 0.2）
-    window_size: 最小濾波器窗口大小（8x8，V5 版本）
-    epsilon: 防止除零的小常數
-    intensity_boost: 亮度自適應 PSI 增幅係數
-    intensity_threshold: 亮度門檻
-    intensity_divisor: 亮度歸一化因子
-    a_gate_threshold: 大氣光亮度門檻（歸一化到0-1，用於區分室內/室外）
-    a_gate_divisor: 大氣光門檻歸一化因子
-    psi_cap: PSI 上限
-
-    返回:
-    D: 去霧後的圖像（np.uint8）
-    A: 大氣光向量（3,）
-    BestPsi: 自動計算的最佳 PSI 值
+    基於 proposed_v5 + 自適應藍通道 PSI 進行去霧處理。
+    藍色偏差自適應：檢測 A_blue 偏高時增加藍通道去霧力道
+    blue_bias_threshold: 最低藍色偏差門檻，低於此值不啟用通道差異
     """
-    # 將輸入轉換為 float 型態以便計算
     H = hazy_image.astype(np.float32)
 
-    # ========== 使用動態 PSI（V5 版本：無降採樣）==========
+    # ========== 使用動態 PSI ==========
     BestPsi = predict_psi(H)
     psi = BestPsi
 
-    # ========== 計算大氣光 A（V5 版本：直接對 full resolution 做處理）==========
-    # 直接對 full resolution 計算暗通道
-    dark_channel = np.min(H, axis=2)  # 取 RGB 最小值
-    dark_min = minimum_filter(dark_channel, size=window_size)  # 8x8 window min
-
-    # 找出最大的 dark channel 值對應的位置
+    # ========== 計算大氣光 A ==========
+    dark_channel = np.min(H, axis=2)
+    dark_min = minimum_filter(dark_channel, size=window_size)
     idx = np.argmax(dark_min)
     y, x = np.unravel_index(idx, dark_min.shape)
-    A = H[y, x, :].copy()  # 大氣光向量
+    A = H[y, x, :].copy()
 
-    # ========== 亮度自適應 PSI 增幅（僅對極亮大氣光生效，區分室內場景）==========
+    # ========== 亮度自適應 PSI 增幅 ==========
     mean_intensity = np.mean(H) / 255.0
     a_brightness = np.mean(A) / 255.0
-
-    # 亮度因子：圖像越亮（霧越濃）→ 增幅越大
     intensity_factor = max(0.0, (mean_intensity - intensity_threshold) / intensity_divisor)
-    # 大氣光門檻：僅在 A 極亮時啟用（室內合成霧 A≈254，室外 A≈235）
     a_gate = max(0.0, min(1.0, (a_brightness - a_gate_threshold) / a_gate_divisor))
-
     adaptive_boost = intensity_boost * intensity_factor * a_gate
     psi = min(psi_cap, psi + adaptive_boost)
 
-    # ========== 使用原始全解析度圖像進行去霧處理 ==========
-    # 對每個通道進行歸一化（除以 A）
+    # ========== 自適應藍色偏差檢測 ==========
+    a_mean = np.mean(A)
+    blue_bias = max(0.0, (A[2] - a_mean) / (a_mean + epsilon))
+    # 只有在藍色偏差超過門檻時才啟用通道差異
+    effective_bias = max(0.0, blue_bias - blue_bias_threshold)
+    blue_extra = min(blue_extra_max, effective_bias * blue_sensitivity)
+    channel_scale = (base_scale_r - blue_extra * blue_R_ratio,
+                     base_scale_g + blue_extra * blue_G_ratio,
+                     base_scale_b + blue_extra)
+
+    # ========== 三通道不同權重去霧 ==========
     H_norm = H / (A + epsilon)
-
-    # 計算歸一化圖像的平均強度 K（每個像素的均值）
     K = np.mean(H_norm, axis=2)
-
-    # 計算最小歸一化值
     min_norm = np.min(H_norm, axis=2)
-
-    # 計算傳輸圖 t
     temp = 3 * K + 3 * min_norm
-    t = (temp - psi * 3 * K * min_norm) / (temp + epsilon)
 
-    # 限制傳輸圖的下界
-    t = np.clip(t, t0, 1)
+    D = np.zeros_like(H)
+    for c in range(3):
+        psi_c = psi * channel_scale[c]
+        t_c = (temp - psi_c * 3 * K * min_norm) / (temp + epsilon)
+        t_c = np.clip(t_c, t0, 1)
+        D[:, :, c] = (H[:, :, c] - A[c]) / t_c + A[c]
 
-    # 利用傳輸圖恢復無霧圖像： D(x) = (H(x) - A) / t(x) + A
-    t_expanded = t[:, :, np.newaxis]
-    D = (H - A) / t_expanded + A
+    D = np.clip(D, 0, 255)
+    # ========== 灰世界白平衡校正（僅藍偏圖像） ==========
+    if blue_bias > blue_bias_threshold:
+        wb_strength = min(wb_max_strength, effective_bias * wb_sensitivity)
+        mean_rgb = np.mean(D, axis=(0, 1))
+        gray_avg = np.mean(mean_rgb)
+        for c in range(3):
+            if mean_rgb[c] > epsilon:
+                scale_c = gray_avg / mean_rgb[c]
+                D[:, :, c] = D[:, :, c] * (1.0 + wb_strength * (scale_c - 1.0))
+    D = np.clip(D, 0, 255)
+    # ========== 藍偏+高霧雙閘 Gamma 校正 ==========
+    if gamma != 1.0 and psi > gamma_psi_threshold and blue_bias > gamma_blue_threshold:
+        gamma_strength = min(1.0, (psi - gamma_psi_threshold) / 0.15)
+        blue_strength = min(1.0, (blue_bias - gamma_blue_threshold) / 0.05)
+        effective_gamma = 1.0 + (gamma - 1.0) * gamma_strength * blue_strength
+        D = 255.0 * np.power(D / 255.0, effective_gamma)
     D = np.clip(D, 0, 255).astype(np.uint8)
-
     return D, A, psi
 
 
@@ -176,7 +174,7 @@ if __name__ == "__main__":
     import pandas as pd
     from tqdm import tqdm
 
-    defog_version = "defog_avsd_v5_mod"
+    defog_version = "defog_avsd_v8"
     datasets = ["OHaze", "SOTS_out", "SOTS_in"]
 
     targets = {
@@ -314,7 +312,7 @@ if __name__ == "__main__":
 
     # ========== Summary ==========
     print(f"\n\n{'='*70}")
-    print(f"AVSD V5 Mod Summary vs Targets")
+    print(f"AVSD V8 (3-Type Channel) Summary vs Targets")
     print(f"{'='*70}")
     print(f"{'Dataset':<15} | {'PSNR':>8} ({'Tgt':>8}) | {'SSIM':>8} ({'Tgt':>8}) | {'CIEDE':>8} ({'Tgt':>8})")
     print(f"{'-'*15}-+-{'-'*19}-+-{'-'*19}-+-{'-'*19}")
