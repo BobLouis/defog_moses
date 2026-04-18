@@ -23,6 +23,17 @@ V8 Simple 改進：
 # AVSD V8 Simple: Per-channel psi weights only (+4 multipliers vs V5)
 # - 保留: predict_psi, A estimation, adaptive PSI boost, blue bias, per-channel t_c
 # - 移除: base_scale, WB correction, gamma correction
+#
+#======================================================================
+#AVSD V8 Simple (Per-channel t_c only, +4 multipliers) Summary vs Targets
+#======================================================================
+#Dataset         |     PSNR (     Tgt) |     SSIM (     Tgt) |    CIEDE (     Tgt)
+#----------------+---------------------+---------------------+--------------------
+#OHaze           | 16.8492+ (16.7290) |  0.5996+ ( 0.5942) | 13.9273+ (15.3479)
+#SOTS_out        | 22.2186+ (22.1355) |  0.8860+ ( 0.8840) |  6.0701+ ( 6.0956)
+#SOTS_in         | 18.8638+ (18.8006) |  0.8028+ ( 0.7856) |  8.2583+ (10.4843)
+#Ihaze           | 15.8392+ ( 0.0000) |  0.7452+ ( 0.0000) | 13.8682+ (99.0000)
+#======================================================================
 #======================================================================
 
 
@@ -136,20 +147,19 @@ if __name__ == "__main__":
 
     defog_version = "defog_avsd_v8_simple"
     datasets = ["OHaze", "SOTS_out", "SOTS_in", "Ihaze"]
-    datasets = ["Ihaze"]
 
     targets = {
-        #"OHaze":    {"PSNR": 16.7290, "SSIM": 0.5942, "CIEDE2000": 15.3479},
-        #"SOTS_out": {"PSNR": 22.1355, "SSIM": 0.8840, "CIEDE2000": 6.0956},
-        #"SOTS_in":  {"PSNR": 18.8006, "SSIM": 0.7856, "CIEDE2000": 10.4843},
+        "OHaze":    {"PSNR": 16.7290, "SSIM": 0.5942, "CIEDE2000": 15.3479},
+        "SOTS_out": {"PSNR": 22.1355, "SSIM": 0.8840, "CIEDE2000": 6.0956},
+        "SOTS_in":  {"PSNR": 18.8006, "SSIM": 0.7856, "CIEDE2000": 10.4843},
         "Ihaze":    {"PSNR": 0.0,     "SSIM": 0.0,    "CIEDE2000": 99.0},
     }
 
     # Per-dataset folder / filename conventions
     dataset_config = {
-        #"OHaze":    {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
-        #"SOTS_out": {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
-        #"SOTS_in":  {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+        "OHaze":    {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+        "SOTS_out": {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+        "SOTS_in":  {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
         "Ihaze":    {"hazy_dir": "hazy", "clear_dir": "GT",    "hazy_ext": "jpg", "clear_ext": "jpg", "clear_suffix": "GT"},
     }
 

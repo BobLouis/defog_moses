@@ -28,11 +28,18 @@ S_H(x) = 1 - (min_c(H_c(x)) / K_H(x)), which c is rgb
 #======================================================================
 # AVSD V5 Mod Summary vs Targets
 #======================================================================
-# Dataset         |     PSNR (     Tgt) |     SSIM (     Tgt) |    CIEDE (     Tgt)
-# ----------------+---------------------+---------------------+--------------------
-# OHaze           | 16.6058- (16.7290) |  0.6072+ ( 0.5942) | 15.8305- (15.3479)
-# SOTS_out        | 22.3576+ (22.1355) |  0.8873+ ( 0.8840) |  5.8381+ ( 6.0956)
-# SOTS_in         | 18.8638+ (18.8006) |  0.8028+ ( 0.7856) |  8.2583+ (10.4843)
+'''
+======================================================================
+AVSD V5 Mod Summary vs Targets
+======================================================================
+Dataset         |     PSNR (     Tgt) |     SSIM (     Tgt) |    CIEDE (     Tgt)
+----------------+---------------------+---------------------+--------------------
+OHaze           | 16.6058- (16.7290) |  0.6072+ ( 0.5942) | 15.8305- (15.3479)
+SOTS_out        | 22.3576+ (22.1355) |  0.8873+ ( 0.8840) |  5.8381+ ( 6.0956)
+SOTS_in         | 18.8638+ (18.8006) |  0.8028+ ( 0.7856) |  8.2583+ (10.4843)
+Ihaze           | 15.9231+ ( 0.0000) |  0.7454+ ( 0.0000) | 13.7096+ (99.0000)
+======================================================================
+'''
 #======================================================================
 
 
@@ -177,12 +184,21 @@ if __name__ == "__main__":
     from tqdm import tqdm
 
     defog_version = "defog_avsd_v5_mod"
-    datasets = ["OHaze", "SOTS_out", "SOTS_in"]
+    datasets = ["OHaze", "SOTS_out", "SOTS_in", "Ihaze"]
 
     targets = {
         "OHaze":    {"PSNR": 16.7290, "SSIM": 0.5942, "CIEDE2000": 15.3479},
         "SOTS_out": {"PSNR": 22.1355, "SSIM": 0.8840, "CIEDE2000": 6.0956},
         "SOTS_in":  {"PSNR": 18.8006, "SSIM": 0.7856, "CIEDE2000": 10.4843},
+        "Ihaze":    {"PSNR": 0.0,     "SSIM": 0.0,    "CIEDE2000": 99.0},
+    }
+
+    # Per-dataset folder / filename conventions
+    dataset_config = {
+        "OHaze":    {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+        "SOTS_out": {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+        "SOTS_in":  {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+        "Ihaze":    {"hazy_dir": "hazy", "clear_dir": "GT",    "hazy_ext": "jpg", "clear_ext": "jpg", "clear_suffix": "GT"},
     }
 
     def compute_psnr(defogged_image, clear_image_path, Xsize, Ysize):
@@ -237,11 +253,12 @@ if __name__ == "__main__":
             return 0
 
     def main(dataset):
-        hazy_dir = f"./dataset/{dataset}/hazy"
+        cfg = dataset_config[dataset]
+        hazy_dir = f"./dataset/{dataset}/{cfg['hazy_dir']}"
         output_defog_dir = f"./dataset/{dataset}/result_{defog_version}"
         os.makedirs(output_defog_dir, exist_ok=True)
 
-        hazy_files = sorted(glob(os.path.join(hazy_dir, "*.png")))
+        hazy_files = sorted(glob(os.path.join(hazy_dir, f"*.{cfg['hazy_ext']}")))
 
         for hazy_path in hazy_files:
             full_name = os.path.splitext(os.path.basename(hazy_path))[0]
@@ -264,7 +281,8 @@ if __name__ == "__main__":
                 traceback.print_exc()
 
     def score(dataset):
-        clear_dir = f"./dataset/{dataset}/clear"
+        cfg = dataset_config[dataset]
+        clear_dir = f"./dataset/{dataset}/{cfg['clear_dir']}"
         defog_dir = f"./dataset/{dataset}/result_{defog_version}"
         defog_files = sorted(glob(os.path.join(defog_dir, "*.png")))
 
@@ -274,7 +292,13 @@ if __name__ == "__main__":
 
         for defog_path in tqdm(defog_files, desc=f"Scoring {dataset}"):
             base_name = os.path.splitext(os.path.basename(defog_path))[0].split('_')[0]
-            clear_path = os.path.join(clear_dir, f"{base_name}_clear.png")
+            # Try exact match first, then fall back to glob for datasets with
+            # extra tokens in the clear filename (e.g. Ihaze: 01_indoor_GT.jpg)
+            clear_path = os.path.join(clear_dir, f"{base_name}_{cfg['clear_suffix']}.{cfg['clear_ext']}")
+            if not os.path.exists(clear_path):
+                matches = sorted(glob(os.path.join(clear_dir, f"{base_name}_*{cfg['clear_suffix']}.{cfg['clear_ext']}")))
+                if matches:
+                    clear_path = matches[0]
             if not os.path.exists(clear_path):
                 continue
 

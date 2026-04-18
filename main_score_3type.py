@@ -13,21 +13,35 @@ from tqdm import tqdm
 
 # 根據不同的版本、跑不同的dataset 調整!!!
 # from defog_proposed_atmo_section_claude import defog_img
-from defog_proposed_psi_fog_esti_corr_clean import defog_img
-defog_version = "defog_proposed_psi_fog_esti_corr_clean"
+from defog_2023 import defog_img
+defog_version = "defog_2023"
 # 定義要處理的所有 datasets
 # datasets = ["SOTS_in", "SOTS_out", "Ohaze"]
-datasets = ["SOTS_in", "SOTS_out", "Ohaze"]
+datasets = ["SOTS_in", "SOTS_out", "Ohaze", "Ihaze"]
+
+targets = {
+    "SOTS_in":  {"PSNR": 18.8006, "SSIM": 0.7856, "CIEDE2000": 10.4843},
+    "SOTS_out": {"PSNR": 22.1355, "SSIM": 0.8840, "CIEDE2000": 6.0956},
+    "Ohaze":    {"PSNR": 16.7290, "SSIM": 0.5942, "CIEDE2000": 15.3479},
+    "Ihaze":    {"PSNR": 0.0,     "SSIM": 0.0,    "CIEDE2000": 99.0},
+}
+
+# Per-dataset folder / filename conventions
+dataset_config = {
+    "SOTS_in":  {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+    "SOTS_out": {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+    "Ohaze":    {"hazy_dir": "hazy", "clear_dir": "clear", "hazy_ext": "png", "clear_ext": "png", "clear_suffix": "clear"},
+    "Ihaze":    {"hazy_dir": "hazy", "clear_dir": "GT",    "hazy_ext": "jpg", "clear_ext": "jpg", "clear_suffix": "GT"},
+}
 
 def main(dataset):
-    hazy_dir = f"./dataset/{dataset}/hazy"
+    cfg = dataset_config[dataset]
+    hazy_dir = f"./dataset/{dataset}/{cfg['hazy_dir']}"
     output_defog_dir = f"./dataset/{dataset}/result_{defog_version}"
-    # output_dark_dir = f"./dataset/{dataset}/dark{defog_version}"
 
     os.makedirs(output_defog_dir, exist_ok=True)
-    # os.makedirs(output_dark_dir, exist_ok=True)
 
-    hazy_files = sorted(glob(os.path.join(hazy_dir, "*.png")))
+    hazy_files = sorted(glob(os.path.join(hazy_dir, f"*.{cfg['hazy_ext']}")))
 
     # 用於記錄所有的 BestPsi 值
     bestpsi_list = []
@@ -46,9 +60,15 @@ def main(dataset):
             H = np.array(img)
 
             start_time = time.time()
-            defog_output, A, BestPsi = defog_img(H)
+            result = defog_img(H)
             end_time = time.time()
             diff_time = end_time - start_time
+
+            if len(result) == 3:
+                defog_output, A, BestPsi = result
+            else:
+                defog_output, A = result
+                BestPsi = 0.0
 
             Image.fromarray(defog_output).save(output_defog_path)
 
@@ -154,7 +174,8 @@ def compute_ciede2000(defogged_image, clear_image_path, Xsize, Ysize, sample_ste
         return 0
 
 def score(dataset):
-    clear_dir = f"./dataset/{dataset}/clear"
+    cfg = dataset_config[dataset]
+    clear_dir = f"./dataset/{dataset}/{cfg['clear_dir']}"
     defog_dir = f"./dataset/{dataset}/result_{defog_version}"
 
     defog_files = sorted(glob(os.path.join(defog_dir, "*.png")))
@@ -165,10 +186,16 @@ def score(dataset):
 
     for defog_path in tqdm(defog_files, desc=f"Scoring {dataset}"):
         base_name = os.path.splitext(os.path.basename(defog_path))[0].split('_')[0]
-        clear_path = os.path.join(clear_dir, f"{base_name}_clear.png")
+        # Try exact match first, then fall back to glob for datasets with
+        # extra tokens in the clear filename (e.g. Ihaze: 01_indoor_GT.jpg)
+        clear_path = os.path.join(clear_dir, f"{base_name}_{cfg['clear_suffix']}.{cfg['clear_ext']}")
+        if not os.path.exists(clear_path):
+            matches = sorted(glob(os.path.join(clear_dir, f"{base_name}_*{cfg['clear_suffix']}.{cfg['clear_ext']}")))
+            if matches:
+                clear_path = matches[0]
 
         if not os.path.exists(clear_path):
-            print(f"⚠️ 找不到 ground truth：{clear_path}，跳過")
+            print(f"找不到 ground truth：{clear_path}，跳過")
             continue
 
         defog_img = np.array(Image.open(defog_path).convert('RGB'))
@@ -230,24 +257,19 @@ if __name__ == "__main__":
         if avg_scores:
             all_dataset_scores[dataset] = avg_scores
     
-    # 顯示所有 datasets 的彙總結果
-    print(f"\n\n{'='*80}")
-    print(f"{'='*80}")
-    print(f"{'='*30} 所有 Datasets 的平均值彙總 {'='*30}")
-    print(f"{'='*80}")
-    print(f"{'='*80}\n")
-    
-    if all_dataset_scores:
-        # 建立表格標題
-        print(f"{'Dataset':<15} | {'PSNR':>10} | {'SSIM':>10} | {'CIEDE2000':>12}")
-        print(f"{'-'*15}-+-{'-'*10}-+-{'-'*10}-+-{'-'*12}")
-        
-        # 顯示每個 dataset 的平均值
-        for dataset, scores in all_dataset_scores.items():
-            print(f"{dataset:<15} | {scores['PSNR']:>10.4f} | {scores['SSIM']:>10.4f} | {scores['CIEDE2000']:>12.4f}")
-        
-        print(f"{'='*80}")
-        print(f"\n✅ 所有 datasets 處理完成！")
-    else:
-        print(f"⚠️ 沒有成功處理任何 dataset。")
+    # ========== Summary ==========
+    print(f"\n\n{'='*70}")
+    print(f"{defog_version} Summary vs Targets")
+    print(f"{'='*70}")
+    print(f"{'Dataset':<15} | {'PSNR':>8} ({'Tgt':>8}) | {'SSIM':>8} ({'Tgt':>8}) | {'CIEDE':>8} ({'Tgt':>8})")
+    print(f"{'-'*15}-+-{'-'*19}-+-{'-'*19}-+-{'-'*19}")
+    for ds in datasets:
+        if ds in all_dataset_scores:
+            s = all_dataset_scores[ds]
+            t = targets[ds]
+            p_ok = "+" if s["PSNR"] > t["PSNR"] else "-"
+            s_ok = "+" if s["SSIM"] > t["SSIM"] else "-"
+            c_ok = "+" if s["CIEDE2000"] < t["CIEDE2000"] else "-"
+            print(f"{ds:<15} | {s['PSNR']:>7.4f}{p_ok} ({t['PSNR']:>7.4f}) | {s['SSIM']:>7.4f}{s_ok} ({t['SSIM']:>7.4f}) | {s['CIEDE2000']:>7.4f}{c_ok} ({t['CIEDE2000']:>7.4f})")
+    print(f"{'='*70}")
 
